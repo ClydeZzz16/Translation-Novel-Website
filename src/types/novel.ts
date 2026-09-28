@@ -16,7 +16,7 @@ export interface Novel {
   author: string;
   translator: string;
   status: 'Ongoing' | 'Completed' | 'Hiatus';
-  originalLanguage: 'Chinese' | 'Korean' | 'Japanese';
+  originalLanguage: 'Chinese' | 'Korean' | 'Japanese' | 'English';
   genres: string[];
   rating: number;
   views: number;
@@ -48,4 +48,12 @@ export interface BookmarkItem {
 
 export interface HistoryItem extends BookmarkItem {
   progressPercentage: number;
+}
+
+export interface UserProfile {
+  username: string;
+  bio: string;
+  avatarUrl: string;
+  joinDate: string;
+  readingStreak: number;
 }
