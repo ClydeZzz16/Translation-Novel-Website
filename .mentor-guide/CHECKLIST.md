@@ -9,3 +9,10 @@
   - [x] Main application implementation (Home, Catalog, Reader, Bookmarks, History, Admin)
   - [x] Automated tests (Vitest + Testing Library)
   - [x] Visual UI/UX validation & lint verification
+  - [x] Light theme readability enhancement with Tailwind v4 class-based variant
+  - [x] Initial dataset reset for translated novels post-deployment
+  - [x] Chapter 1 scroll-to-top behavior
+  - [x] Navigation back stack & HTML5 browser history handling
+  - [x] DMCA copyright policy agent email update (`ashtranslation123@gmail.com`)
+  - [x] Direct file upload for novel cover images
+  - [x] English-only translation architecture (removal of language filters & raw chapter toggles)
