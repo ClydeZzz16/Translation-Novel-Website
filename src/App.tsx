@@ -1,24 +1,110 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   BookOpen, Search, Bookmark, History, Settings, Sun, Moon, Sparkles, 
-  ChevronLeft, ChevronRight, Menu, X, ArrowRight, Star, 
-  Flame, Sliders, Shield, AlertTriangle, Play, Plus,
+  ChevronLeft, ChevronRight, Menu, X, ArrowRight, Eye, 
+  Flame, Sliders, Shield, AlertTriangle, Play,
   Trash2, Layers, RefreshCw, Globe, CheckCircle2, BookPlus,
-  User, Lock, Unlock, Key, Award, Clock, LogOut, Edit3, Cloud
+  User, Award, Clock, LogOut, Edit3
 } from 'lucide-react';
-import { Novel, Chapter, ReadingSettings, BookmarkItem, HistoryItem, UserProfile } from './types/novel';
+import { Novel, Chapter, ReadingSettings, BookmarkItem, HistoryItem, UserProfile, Comment } from './types/novel';
 import { INITIAL_NOVELS, ALL_GENRES } from './data/initialNovels';
 import { AdSlot } from './components/AdSlot';
-import { supabase, isSupabaseConfigured, CREATOR_EMAIL } from './lib/supabase';
+import { 
+  supabase, isSupabaseConfigured, signInWithGoogle, signOutUser, 
+  verifyAdminAuthorization, fetchUserProfile,
+  fetchRemoteBookmarks, saveRemoteBookmark, deleteRemoteBookmark,
+  fetchRemoteHistory, saveRemoteHistory, deleteRemoteHistory
+} from './lib/supabase';
+import { User as SupabaseUser } from '@supabase/supabase-js';
+import { AdminLayout, AdminSection } from './components/admin/AdminLayout';
+import { AdminDashboard } from './components/admin/AdminDashboard';
+import { AdminNovels } from './components/admin/AdminNovels';
+import { AdminChapters } from './components/admin/AdminChapters';
+import { AdminComments } from './components/admin/AdminComments';
+import { AdminSettings } from './components/admin/AdminSettings';
+import { AdminLogin } from './components/admin/AdminLogin';
+import { AdminAccessDenied } from './components/admin/AdminAccessDenied';
 
 export { AdSlot };
 
+export type PublicPage = 'home' | 'novels' | 'novel-detail' | 'reader' | 'bookmarks' | 'history' | 'privacy' | 'dmca' | 'about' | 'contact' | 'profile' | 'auth-callback';
+export type AppRoute = 
+  | { type: 'public'; page: PublicPage; slug?: string; chapterId?: string }
+  | { type: 'admin'; section: AdminSection | 'login' };
+
+function parseRouteFromUrl(): AppRoute {
+  if (typeof window === 'undefined') return { type: 'public', page: 'home' };
+  const pathname = window.location.pathname.replace(/\/$/, '') || '/';
+  
+  if (pathname === '/admin/login') {
+    return { type: 'admin', section: 'login' };
+  }
+  if (pathname === '/admin/novels') {
+    return { type: 'admin', section: 'novels' };
+  }
+  if (pathname === '/admin/chapters') {
+    return { type: 'admin', section: 'chapters' };
+  }
+  if (pathname === '/admin/comments') {
+    return { type: 'admin', section: 'comments' };
+  }
+  if (pathname === '/admin/settings') {
+    return { type: 'admin', section: 'settings' };
+  }
+  if (pathname === '/admin') {
+    return { type: 'admin', section: 'dashboard' };
+  }
+
+  if (pathname === '/novels') {
+    return { type: 'public', page: 'novels' };
+  }
+  const novelDetailMatch = pathname.match(/^\/novels\/([^/]+)$/);
+  if (novelDetailMatch) {
+    return { type: 'public', page: 'novel-detail', slug: novelDetailMatch[1] };
+  }
+  const readerMatch = pathname.match(/^\/reader\/([^/]+)\/([^/]+)$/);
+  if (readerMatch) {
+    return { type: 'public', page: 'reader', slug: readerMatch[1], chapterId: readerMatch[2] };
+  }
+  if (pathname === '/bookmarks') {
+    return { type: 'public', page: 'bookmarks' };
+  }
+  if (pathname === '/history') {
+    return { type: 'public', page: 'history' };
+  }
+  if (pathname === '/about') {
+    return { type: 'public', page: 'about' };
+  }
+  if (pathname === '/contact') {
+    return { type: 'public', page: 'contact' };
+  }
+  if (pathname === '/privacy') {
+    return { type: 'public', page: 'privacy' };
+  }
+  if (pathname === '/dmca') {
+    return { type: 'public', page: 'dmca' };
+  }
+  if (pathname === '/profile') {
+    return { type: 'public', page: 'profile' };
+  }
+  if (pathname === '/auth/callback') {
+    return { type: 'public', page: 'auth-callback' };
+  }
+
+  return { type: 'public', page: 'home' };
+}
+
 export default function App() {
-  // Navigation & Page State
-  const [currentPage, setCurrentPage] = useState<'home' | 'novels' | 'novel-detail' | 'reader' | 'bookmarks' | 'history' | 'admin' | 'privacy' | 'dmca' | 'about' | 'profile'>('home');
-  const [previousPage, setPreviousPage] = useState<'home' | 'novels' | 'bookmarks' | 'history' | 'profile'>('home');
-  const [selectedNovelSlug, setSelectedNovelSlug] = useState<string>('');
-  const [selectedChapterId, setSelectedChapterId] = useState<string>('');
+  // Navigation & Route State
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>(() => parseRouteFromUrl());
+  const currentPage = currentRoute.type === 'public' ? currentRoute.page : 'home';
+  const [previousPage, setPreviousPage] = useState<PublicPage>('home');
+  const [selectedNovelSlug, setSelectedNovelSlug] = useState<string>(() => {
+    return currentRoute.type === 'public' && currentRoute.slug ? currentRoute.slug : '';
+  });
+  const [selectedChapterId, setSelectedChapterId] = useState<string>(() => {
+    return currentRoute.type === 'public' && currentRoute.chapterId ? currentRoute.chapterId : '';
+  });
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
     const savedTheme = localStorage.getItem('ashtl_theme');
@@ -40,26 +126,57 @@ export default function App() {
     return INITIAL_NOVELS;
   });
 
+  const [comments, setComments] = useState<Comment[]>(() => {
+    const saved = localStorage.getItem('ashtl_comments');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {}
+    }
+    return [
+      {
+        id: 'cmt-1',
+        novelId: 'novel-1',
+        novelTitle: 'Return of the Mount Hua Sect',
+        chapterId: 'c_1',
+        chapterTitle: 'Chapter 1: Plum Blossoms Fall',
+        userName: 'SwordSaint',
+        userAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=150',
+        content: 'The sword descriptions and martial arts terminology are translated so accurately. Looking forward to more chapters!',
+        status: 'approved',
+        createdAt: new Date(Date.now() - 3600000 * 12).toISOString()
+      },
+      {
+        id: 'cmt-2',
+        novelId: 'novel-1',
+        novelTitle: 'Return of the Mount Hua Sect',
+        chapterId: 'c_1',
+        chapterTitle: 'Chapter 1: Plum Blossoms Fall',
+        userName: 'Reader99',
+        content: 'Great translation pacing, clean reading layout too.',
+        status: 'approved',
+        createdAt: new Date(Date.now() - 3600000 * 2).toISOString()
+      }
+    ];
+  });
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
+  const [sortBy, setSortBy] = useState<'popular' | 'bookmarks' | 'latest'>('popular');
 
-  const [sortBy, setSortBy] = useState<'popular' | 'latest' | 'rating'>('popular');
+  // Supabase & Admin Authentication State (Unified for Visitors, Readers, & Admin)
+  const [authUser, setAuthUser] = useState<SupabaseUser | null>(null);
+  const [adminUser, setAdminUser] = useState<any>(null);
+  const [isAdminAuthorized, setIsAdminAuthorized] = useState<boolean>(() => {
+    return localStorage.getItem('ashtl_admin_session') === 'true';
+  });
+  const [adminUnauthorizedEmail, setAdminUnauthorizedEmail] = useState<string | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
 
-  // Creator Authentication & Security State
-  const DEFAULT_CREATOR_PASSCODE = 'creator123';
-  const [isCreatorAuthenticated, setIsCreatorAuthenticated] = useState<boolean>(() => {
-    return localStorage.getItem('ashtl_creator_session') === 'true';
-  });
-  const [creatorEmailInput, setCreatorEmailInput] = useState('');
-  const [creatorPasswordInput, setCreatorPasswordInput] = useState('');
-  const [creatorPasscode, setCreatorPasscode] = useState<string>(() => {
-    return localStorage.getItem('ashtl_creator_passcode') || DEFAULT_CREATOR_PASSCODE;
-  });
-  const [passcodeInput, setPasscodeInput] = useState('');
-  const [passcodeError, setPasscodeError] = useState('');
-  const [newPasscodeSetting, setNewPasscodeSetting] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
+  // Active Admin Novel ID Selection
+  const [adminNovelId, setAdminNovelId] = useState<string>('');
 
   // User Profile State
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
@@ -83,24 +200,6 @@ export default function App() {
   const [editAvatarUrl, setEditAvatarUrl] = useState(userProfile.avatarUrl);
   const [profileActiveTab, setProfileActiveTab] = useState<'overview' | 'bookmarks' | 'history' | 'preferences'>('overview');
 
-  // Admin Novel Creation State
-  const [adminActiveTab, setAdminActiveTab] = useState<'create-novel' | 'add-chapter' | 'creator-settings'>('create-novel');
-  const [newNovelTitle, setNewNovelTitle] = useState('');
-  const [newNovelAuthor, setNewNovelAuthor] = useState('');
-  const [newNovelTranslator, setNewNovelTranslator] = useState('');
-
-  const [newNovelStatus, setNewNovelStatus] = useState<'Ongoing' | 'Completed' | 'Hiatus'>('Ongoing');
-  const [newNovelGenres, setNewNovelGenres] = useState('Fantasy, Action');
-  const [newNovelCoverData, setNewNovelCoverData] = useState('');
-  const [newNovelSynopsis, setNewNovelSynopsis] = useState('');
-  const [newNovelAltTitles, setNewNovelAltTitles] = useState('');
-  const [newNovelNotes, setNewNovelNotes] = useState('');
-
-  // Admin Chapter Upload State
-  const [adminNovelId, setAdminNovelId] = useState<string>('');
-  const [adminChapterTitle, setAdminChapterTitle] = useState('');
-  const [adminChapterContent, setAdminChapterContent] = useState('');
-
   // Reader Customizer Settings (Persisted in LocalStorage)
   const [readerSettings, setReaderSettings] = useState<ReadingSettings>({
     fontSize: 'md',
@@ -115,6 +214,9 @@ export default function App() {
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const getBookmarkStorageKey = (uid?: string | null) => (uid ? `ashtl_bookmarks_${uid}` : 'ashtl_bookmarks');
+  const getHistoryStorageKey = (uid?: string | null) => (uid ? `ashtl_history_${uid}` : 'ashtl_history');
 
   // Initialize theme and load persisted reader preferences
   useEffect(() => {
@@ -152,25 +254,14 @@ export default function App() {
     }
   }, [themeMode]);
 
-  // Browser History API Integration (Popstate) to prevent exiting website on back click
+  // Browser History API Integration (Popstate)
   useEffect(() => {
-    if (!window.history.state || !window.history.state.page) {
-      window.history.replaceState({ page: 'home', sentinel: true }, '', '');
-      window.history.pushState({ page: 'home' }, '', '');
-    }
-
-    const handlePopState = (event: PopStateEvent) => {
-      const state = event.state;
-      if (state && state.sentinel) {
-        window.history.pushState({ page: 'home' }, '', '');
-        setCurrentPage('home');
-      } else if (state && state.page) {
-        setCurrentPage(state.page);
-        if (state.slug) setSelectedNovelSlug(state.slug);
-        if (state.chapterId) setSelectedChapterId(state.chapterId);
-      } else {
-        window.history.pushState({ page: 'home' }, '', '');
-        setCurrentPage('home');
+    const handlePopState = () => {
+      const route = parseRouteFromUrl();
+      setCurrentRoute(route);
+      if (route.type === 'public') {
+        if (route.slug) setSelectedNovelSlug(route.slug);
+        if (route.chapterId) setSelectedChapterId(route.chapterId);
       }
       window.scrollTo(0, 0);
     };
@@ -179,80 +270,286 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Listen to Supabase Auth State and sync creator privileges
+  // Supabase Authentication & Role Verification (Unified Google Sign-In)
   useEffect(() => {
-    if (!supabase) return;
+    const client = supabase;
+    if (!client) {
+      setIsAuthChecking(false);
+      return;
+    }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user?.email?.toLowerCase() === CREATOR_EMAIL.toLowerCase()) {
-        setIsCreatorAuthenticated(true);
-        localStorage.setItem('ashtl_creator_session', 'true');
-      }
-    });
+    const processSession = async (session: any) => {
+      if (session?.user) {
+        setAuthUser(session.user);
+        const email = session.user.email || null;
+        const isAuthorized = await verifyAdminAuthorization(session.user.id, email);
+        if (isAuthorized) {
+          setIsAdminAuthorized(true);
+          setAdminUser(session.user);
+          setAdminUnauthorizedEmail(null);
+          localStorage.setItem('ashtl_admin_session', 'true');
+        } else {
+          setIsAdminAuthorized(false);
+          setAdminUser(null);
+          setAdminUnauthorizedEmail(email);
+          localStorage.removeItem('ashtl_admin_session');
+        }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user?.email?.toLowerCase() === CREATOR_EMAIL.toLowerCase()) {
-        setIsCreatorAuthenticated(true);
-        localStorage.setItem('ashtl_creator_session', 'true');
-      } else if (!session && localStorage.getItem('ashtl_auth_provider') === 'supabase') {
-        setIsCreatorAuthenticated(false);
-        localStorage.removeItem('ashtl_creator_session');
+        try {
+          const profile = await fetchUserProfile(session.user.id);
+          const meta = session.user.user_metadata || {};
+          const fallbackName = meta.full_name || meta.name || email?.split('@')[0] || 'AshReader';
+          const fallbackAvatar = meta.avatar_url || meta.picture || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250';
+          
+          setUserProfile(prev => {
+            const updated: UserProfile = {
+              id: session.user.id,
+              email: email || undefined,
+              username: profile?.username || fallbackName,
+              bio: profile?.bio || prev.bio,
+              avatarUrl: profile?.avatar_url || fallbackAvatar,
+              joinDate: profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : prev.joinDate,
+              readingStreak: profile?.reading_streak ?? prev.readingStreak,
+              role: isAuthorized ? 'admin' : 'user'
+            };
+            try {
+              localStorage.setItem('ashtl_user_profile', JSON.stringify(updated));
+            } catch (e) {}
+            return updated;
+          });
+        } catch (profileErr) {
+          console.error('Failed to sync user profile:', profileErr);
+        }
+      } else {
+        setAuthUser(null);
+        setAdminUser(null);
+        if (localStorage.getItem('ashtl_admin_session') !== 'true') {
+          setIsAdminAuthorized(false);
+        }
+        setAdminUnauthorizedEmail(null);
       }
+    };
+
+    const verifySession = async () => {
+      setIsAuthChecking(true);
+      try {
+        const { data: { session } } = await client.auth.getSession();
+        await processSession(session);
+      } catch (err) {
+        console.error('Error verifying Supabase session:', err);
+      } finally {
+        setIsAuthChecking(false);
+      }
+    };
+
+    verifySession();
+
+    const { data: { subscription } } = client.auth.onAuthStateChange(async (_event, session) => {
+      await processSession(session);
+      setIsAuthChecking(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch novels from Supabase cloud database if configured
+  // Synchronize Bookmarks & Reading History per account (Isolated per user, synced with Supabase)
+  useEffect(() => {
+    const uid = authUser?.id || null;
+    const bKey = getBookmarkStorageKey(uid);
+    const hKey = getHistoryStorageKey(uid);
+
+    let localBm: BookmarkItem[] = [];
+    const savedBookmarks = localStorage.getItem(bKey);
+    if (savedBookmarks) {
+      try { localBm = JSON.parse(savedBookmarks); } catch (e) {}
+    }
+    setBookmarks(localBm);
+
+    let localHist: HistoryItem[] = [];
+    const savedHistory = localStorage.getItem(hKey);
+    if (savedHistory) {
+      try { localHist = JSON.parse(savedHistory); } catch (e) {}
+    }
+    setHistory(localHist);
+
+    // If authenticated and Supabase is configured, fetch remote bookmarks & history
+    if (uid && supabase && isSupabaseConfigured) {
+      fetchRemoteBookmarks(uid).then((remoteBms) => {
+        if (remoteBms && remoteBms.length > 0) {
+          setBookmarks((prev) => {
+            const merged = [...prev];
+            for (const rb of remoteBms) {
+              const matchedNovel = novels.find(n => n.id === rb.novel_id);
+              if (matchedNovel && !merged.some(b => b.novelId === rb.novel_id)) {
+                merged.push({
+                  novelId: rb.novel_id,
+                  novelTitle: matchedNovel.title,
+                  novelCover: matchedNovel.coverUrl,
+                  lastReadChapterId: rb.last_read_chapter_id || matchedNovel.chapters[0]?.id || 'c1',
+                  lastReadChapterNum: rb.last_read_chapter_num || 1,
+                  timestamp: new Date(rb.created_at).getTime()
+                });
+              }
+            }
+            try { localStorage.setItem(bKey, JSON.stringify(merged)); } catch (e) {}
+            return merged;
+          });
+        }
+      });
+
+      fetchRemoteHistory(uid).then((remoteHists) => {
+        if (remoteHists && remoteHists.length > 0) {
+          setHistory((prev) => {
+            const merged = [...prev];
+            for (const rh of remoteHists) {
+              const matchedNovel = novels.find(n => n.id === rh.novel_id);
+              if (matchedNovel && !merged.some(h => h.novelId === rh.novel_id)) {
+                merged.push({
+                  novelId: rh.novel_id,
+                  novelTitle: matchedNovel.title,
+                  novelCover: matchedNovel.coverUrl,
+                  lastReadChapterId: rh.last_read_chapter_id || 'c1',
+                  lastReadChapterNum: rh.last_read_chapter_num || 1,
+                  timestamp: new Date(rh.updated_at).getTime(),
+                  progressPercentage: rh.progress_percentage || 100
+                });
+              }
+            }
+            try { localStorage.setItem(hKey, JSON.stringify(merged)); } catch (e) {}
+            return merged;
+          });
+        }
+      });
+    }
+  }, [authUser?.id]);
+
+  // Automatically prune bookmarks and reading history for novels that no longer exist
+  useEffect(() => {
+    if (novels.length === 0) return;
+    const existingNovelIds = new Set(novels.map(n => n.id));
+
+    setBookmarks(prev => {
+      const filtered = prev.filter(b => existingNovelIds.has(b.novelId));
+      if (filtered.length !== prev.length) {
+        const bKey = getBookmarkStorageKey(authUser?.id);
+        try { localStorage.setItem(bKey, JSON.stringify(filtered)); } catch (e) {}
+        if (!authUser) {
+          try { localStorage.setItem('ashtl_bookmarks', JSON.stringify(filtered)); } catch (e) {}
+        }
+      }
+      return filtered;
+    });
+
+    setHistory(prev => {
+      const filtered = prev.filter(h => existingNovelIds.has(h.novelId));
+      if (filtered.length !== prev.length) {
+        const hKey = getHistoryStorageKey(authUser?.id);
+        try { localStorage.setItem(hKey, JSON.stringify(filtered)); } catch (e) {}
+        if (!authUser) {
+          try { localStorage.setItem('ashtl_history', JSON.stringify(filtered)); } catch (e) {}
+        }
+      }
+      return filtered;
+    });
+  }, [novels, authUser?.id]);
+
+  // Fetch novels and comments from Supabase cloud database if configured
   useEffect(() => {
     if (!supabase || !isSupabaseConfigured) return;
 
-    const fetchSupabaseNovels = async () => {
+    const fetchSupabaseData = async () => {
       const client = supabase;
       if (!client) return;
       try {
-        const { data: novelsData, error: novelsError } = await client
+        const { data: novelsData } = await client
           .from('novels')
           .select('*, chapters(*)');
 
-        if (!novelsError && novelsData && novelsData.length > 0) {
-          const mappedNovels: Novel[] = novelsData.map(n => ({
-            id: n.id,
-            slug: n.slug,
-            title: n.title,
-            altTitles: n.alt_titles || [],
-            author: n.author,
-            translator: n.translator || 'AshTL',
-            status: n.status || 'Ongoing',
-            originalLanguage: 'English',
-            genres: n.genres || [],
-            rating: Number(n.rating) || 5.0,
-            views: Number(n.views) || 0,
-            bookmarksCount: Number(n.bookmarks_count) || 0,
-            coverUrl: n.cover_url || '',
-            synopsis: n.synopsis || '',
-            latestChapter: Number(n.latest_chapter) || 0,
-            chapters: (n.chapters || []).map((c: any) => ({
-              id: c.id,
-              chapterNumber: c.chapter_number,
-              title: c.title,
-              content: c.content,
-              wordCount: c.word_count || 0,
-              releaseDate: c.release_date || new Date().toISOString()
-            }))
-          }));
+        if (novelsData && novelsData.length > 0) {
+          const localNovelsRaw = localStorage.getItem('ashtl_novels');
+          const localMap: Record<string, { views?: number; bookmarksCount?: number }> = {};
+          if (localNovelsRaw) {
+            try {
+              const parsed = JSON.parse(localNovelsRaw);
+              if (Array.isArray(parsed)) {
+                for (const p of parsed) {
+                  if (p && p.id) {
+                    localMap[p.id] = { views: Number(p.views) || 0, bookmarksCount: Number(p.bookmarksCount) || 0 };
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+
+          const mappedNovels: Novel[] = novelsData.map(n => {
+            const local = localMap[n.id];
+            const viewsFromDb = Number(n.views) || 0;
+            const bmsFromDb = Number(n.bookmarks_count) || 0;
+            const views = Math.max(viewsFromDb, local?.views || 0);
+            const bookmarksCount = Math.max(bmsFromDb, local?.bookmarksCount || 0);
+
+            return {
+              id: n.id,
+              slug: n.slug,
+              title: n.title,
+              altTitles: n.alt_titles || [],
+              author: n.author,
+              translator: n.translator || 'AshTL',
+              status: n.status || 'Ongoing',
+              originalLanguage: 'English',
+              genres: n.genres || [],
+              rating: Number(n.rating) || 5.0,
+              views,
+              bookmarksCount,
+              coverUrl: n.cover_url || '',
+              synopsis: n.synopsis || '',
+              latestChapter: Number(n.latest_chapter) || 0,
+              isPublished: n.is_published !== false,
+              chapters: (n.chapters || []).map((c: any) => ({
+                id: c.id,
+                chapterNumber: c.chapter_number,
+                title: c.title,
+                content: c.content,
+                wordCount: c.word_count || 0,
+                isPublished: c.is_published !== false,
+                releaseDate: c.release_date || new Date().toISOString()
+              }))
+            };
+          });
           setNovels(mappedNovels);
           localStorage.setItem('ashtl_novels', JSON.stringify(mappedNovels));
+        }
+
+        const { data: commentsData } = await client
+          .from('comments')
+          .select('*, novels(title), chapters(title)');
+
+        if (commentsData && commentsData.length > 0) {
+          const mappedComments: Comment[] = commentsData.map((c: any) => ({
+            id: c.id,
+            novelId: c.novel_id,
+            chapterId: c.chapter_id,
+            novelTitle: c.novels?.title || '',
+            chapterTitle: c.chapters?.title || '',
+            userId: c.user_id,
+            userName: c.user_name || 'Reader',
+            userAvatar: c.user_avatar || '',
+            content: c.content,
+            status: c.status || 'approved',
+            createdAt: c.created_at
+          }));
+          setComments(mappedComments);
+          localStorage.setItem('ashtl_comments', JSON.stringify(mappedComments));
         }
       } catch (err) {
         console.error('Supabase fetch failed, continuing with local state', err);
       }
     };
 
-    fetchSupabaseNovels();
+    fetchSupabaseData();
   }, []);
 
-  // Save novels to localStorage whenever changed
+  // Save novels & comments to localStorage whenever changed
   useEffect(() => {
     localStorage.setItem('ashtl_novels', JSON.stringify(novels));
     if (novels.length > 0 && !adminNovelId) {
@@ -260,10 +557,51 @@ export default function App() {
     }
   }, [novels, adminNovelId]);
 
+  useEffect(() => {
+    localStorage.setItem('ashtl_comments', JSON.stringify(comments));
+  }, [comments]);
+
   // Always reset scroll to top on view or chapter navigation
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [currentPage, selectedChapterId, selectedNovelSlug]);
+  }, [currentRoute, selectedChapterId, selectedNovelSlug]);
+
+  // Route Protection Guard for Admin Subroutes
+  useEffect(() => {
+    if (isAuthChecking) return;
+    if (currentRoute.type === 'admin') {
+      if (currentRoute.section !== 'login') {
+        if (!isAdminAuthorized && !adminUnauthorizedEmail) {
+          navigateToAdmin('login', false);
+        }
+      } else if (isAdminAuthorized && !adminUnauthorizedEmail) {
+        navigateToAdmin('dashboard', false);
+      }
+    }
+  }, [currentRoute, isAdminAuthorized, adminUnauthorizedEmail, isAuthChecking]);
+
+  // OAuth Callback Route Processing
+  useEffect(() => {
+    if (isAuthChecking) return;
+    if (currentRoute.type === 'public' && currentRoute.page === 'auth-callback') {
+      const searchParams = new URLSearchParams(window.location.search);
+      const next = searchParams.get('next') || '/';
+
+      if (next === '/admin' || next.startsWith('/admin/')) {
+        if (isAdminAuthorized) {
+          navigateToAdmin('dashboard', false);
+        } else if (adminUnauthorizedEmail) {
+          navigateToAdmin('dashboard', false);
+        } else {
+          navigateToAdmin('login', false);
+        }
+      } else if (next === '/profile') {
+        navigateTo('profile', false, false);
+      } else {
+        navigateTo('home', false, false);
+      }
+    }
+  }, [currentRoute, isAuthChecking, isAdminAuthorized, adminUnauthorizedEmail]);
 
   const toggleTheme = () => {
     const nextTheme = themeMode === 'dark' ? 'light' : 'dark';
@@ -271,90 +609,326 @@ export default function App() {
     localStorage.setItem('ashtl_theme', nextTheme);
   };
 
-  const navigateTo = (page: typeof currentPage, preservePrevious: boolean = true, pushHistory: boolean = true) => {
-    if (preservePrevious && (currentPage === 'home' || currentPage === 'novels' || currentPage === 'bookmarks' || currentPage === 'history' || currentPage === 'profile')) {
-      setPreviousPage(currentPage);
+  const navigateTo = (page: PublicPage, preservePrevious: boolean = true, pushHistory: boolean = true, slug?: string, chapterId?: string) => {
+    if (preservePrevious && currentRoute.type === 'public' && (currentRoute.page === 'home' || currentRoute.page === 'novels' || currentRoute.page === 'bookmarks' || currentRoute.page === 'history' || currentRoute.page === 'profile')) {
+      setPreviousPage(currentRoute.page);
     }
-    setCurrentPage(page);
-    if (pushHistory && page !== currentPage) {
-      window.history.pushState({ page }, '', '');
+    
+    let path = '/';
+    if (page === 'novels') path = '/novels';
+    else if (page === 'novel-detail' && (slug || selectedNovelSlug)) path = `/novels/${slug || selectedNovelSlug}`;
+    else if (page === 'reader' && (slug || selectedNovelSlug) && (chapterId || selectedChapterId)) path = `/reader/${slug || selectedNovelSlug}/${chapterId || selectedChapterId}`;
+    else if (page === 'bookmarks') path = '/bookmarks';
+    else if (page === 'history') path = '/history';
+    else if (page === 'about') path = '/about';
+    else if (page === 'contact') path = '/contact';
+    else if (page === 'privacy') path = '/privacy';
+    else if (page === 'dmca') path = '/dmca';
+    else if (page === 'profile') path = '/profile';
+    else if (page === 'auth-callback') path = '/auth/callback';
+
+    const targetSlug = slug !== undefined ? slug : selectedNovelSlug;
+    const targetChapterId = chapterId !== undefined ? chapterId : selectedChapterId;
+
+    const newRoute: AppRoute = { type: 'public', page, slug: targetSlug, chapterId: targetChapterId };
+    setCurrentRoute(newRoute);
+    if (targetSlug) setSelectedNovelSlug(targetSlug);
+    if (targetChapterId) setSelectedChapterId(targetChapterId);
+
+    if (pushHistory) {
+      window.history.pushState(newRoute, '', path);
     }
     window.scrollTo(0, 0);
   };
 
-  const handleCreatorPasscodeLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (passcodeInput === creatorPasscode) {
-      setIsCreatorAuthenticated(true);
-      localStorage.setItem('ashtl_creator_session', 'true');
-      setPasscodeError('');
-      setPasscodeInput('');
-      showToast('Creator Mode unlocked! Welcome back, Creator.');
-    } else {
-      setPasscodeError('Invalid creator passcode. Access denied.');
+  const navigateToAdmin = (section: AdminSection | 'login', pushHistory: boolean = true) => {
+    const path = section === 'dashboard' ? '/admin' : `/admin/${section}`;
+    const newRoute: AppRoute = { type: 'admin', section };
+    setCurrentRoute(newRoute);
+    if (pushHistory) {
+      window.history.pushState(newRoute, '', path);
     }
+    window.scrollTo(0, 0);
   };
 
-  const handleSupabaseCreatorLogin = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!creatorEmailInput || !creatorPasswordInput) {
-      setPasscodeError('Please enter both email and password.');
-      return;
-    }
-    if (!supabase) {
-      setPasscodeError('Supabase is not configured. Use passcode authentication or add .env keys.');
-      return;
-    }
+  const handleAdminSignOut = async () => {
+    await signOutUser();
+    setIsAdminAuthorized(false);
+    setAuthUser(null);
+    setAdminUser(null);
+    setAdminUnauthorizedEmail(null);
+    localStorage.removeItem('ashtl_admin_session');
+    showToast('Admin signed out.');
+    navigateToAdmin('login', true);
+  };
 
-    setAuthLoading(true);
-    setPasscodeError('');
+  const handleUserLogout = async () => {
+    await signOutUser();
+    setAuthUser(null);
+    setAdminUser(null);
+    setIsAdminAuthorized(false);
+    setAdminUnauthorizedEmail(null);
+    localStorage.removeItem('ashtl_admin_session');
+    const resetProfile: UserProfile = {
+      username: 'Guest Reader',
+      bio: 'Asian web novel enthusiast & translation supporter.',
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250',
+      joinDate: 'October 2026',
+      readingStreak: 0,
+      role: 'user'
+    };
+    setUserProfile(resetProfile);
+    localStorage.setItem('ashtl_user_profile', JSON.stringify(resetProfile));
+
+    // Switch bookmarks & history back to guest storage
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: creatorEmailInput.trim(),
-        password: creatorPasswordInput
-      });
-
-      if (error) {
-        setPasscodeError(error.message);
-      } else if (data.user) {
-        if (data.user.email?.toLowerCase() === CREATOR_EMAIL.toLowerCase()) {
-          setIsCreatorAuthenticated(true);
-          localStorage.setItem('ashtl_creator_session', 'true');
-          localStorage.setItem('ashtl_auth_provider', 'supabase');
-          setCreatorEmailInput('');
-          setCreatorPasswordInput('');
-          showToast('Welcome back, Creator! Authenticated via Supabase.');
-        } else {
-          setPasscodeError(`Access restricted. Email ${data.user.email} is not authorized as creator.`);
-        }
-      }
-    } catch (err: any) {
-      setPasscodeError(err?.message || 'Authentication failed');
-    } finally {
-      setAuthLoading(false);
+      const guestBm = localStorage.getItem('ashtl_bookmarks');
+      setBookmarks(guestBm ? JSON.parse(guestBm) : []);
+    } catch (e) {
+      setBookmarks([]);
     }
-  };
-
-  const handleCreatorLogout = async () => {
-    if (supabase) {
-      await supabase.auth.signOut().catch(() => {});
+    try {
+      const guestHist = localStorage.getItem('ashtl_history');
+      setHistory(guestHist ? JSON.parse(guestHist) : []);
+    } catch (e) {
+      setHistory([]);
     }
-    setIsCreatorAuthenticated(false);
-    localStorage.removeItem('ashtl_creator_session');
-    localStorage.removeItem('ashtl_auth_provider');
-    showToast('Creator session locked.');
+
+    showToast('You have been logged out.');
     navigateTo('home');
   };
 
-  const handleUpdateCreatorPasscode = () => {
-    if (!newPasscodeSetting.trim() || newPasscodeSetting.trim().length < 4) {
-      showToast('Passcode must be at least 4 characters.');
-      return;
+  const handleSaveNovel = (novelToSave: Novel, isNew: boolean) => {
+    if (isNew) {
+      setNovels([novelToSave, ...novels]);
+      setAdminNovelId(novelToSave.id);
+      if (supabase && isSupabaseConfigured) {
+        supabase.from('novels').insert({
+          id: novelToSave.id,
+          slug: novelToSave.slug,
+          title: novelToSave.title,
+          alt_titles: novelToSave.altTitles,
+          author: novelToSave.author,
+          translator: novelToSave.translator,
+          status: novelToSave.status,
+          original_language: 'English',
+          genres: novelToSave.genres,
+          rating: novelToSave.rating,
+          views: novelToSave.views,
+          bookmarks_count: novelToSave.bookmarksCount,
+          cover_url: novelToSave.coverUrl,
+          synopsis: novelToSave.synopsis,
+          latest_chapter: novelToSave.latestChapter,
+          is_published: novelToSave.isPublished !== false
+        }).then(({ error }) => {
+          if (error) {
+            console.error('Error inserting novel into Supabase', error);
+            showToast(`Database notice: ${error.message}`);
+          }
+        });
+      }
+      showToast(`Novel "${novelToSave.title}" created successfully!`);
+    } else {
+      setNovels(novels.map(n => n.id === novelToSave.id ? novelToSave : n));
+      if (supabase && isSupabaseConfigured) {
+        supabase.from('novels').update({
+          slug: novelToSave.slug,
+          title: novelToSave.title,
+          alt_titles: novelToSave.altTitles,
+          author: novelToSave.author,
+          translator: novelToSave.translator,
+          status: novelToSave.status,
+          genres: novelToSave.genres,
+          cover_url: novelToSave.coverUrl,
+          synopsis: novelToSave.synopsis,
+          is_published: novelToSave.isPublished !== false
+        }).eq('id', novelToSave.id).then(({ error }) => {
+          if (error) {
+            console.error('Error updating novel in Supabase', error);
+            showToast(`Database notice: ${error.message}`);
+          }
+        });
+      }
+      showToast(`Novel "${novelToSave.title}" updated successfully!`);
     }
-    setCreatorPasscode(newPasscodeSetting.trim());
-    localStorage.setItem('ashtl_creator_passcode', newPasscodeSetting.trim());
-    setNewPasscodeSetting('');
-    showToast('Creator passcode successfully updated!');
+  };
+
+  const handleDeleteNovel = (novelId: string) => {
+    const novelToDelete = novels.find(n => n.id === novelId);
+    setNovels(novels.filter(n => n.id !== novelId));
+
+    // Clean up bookmarks immediately
+    setBookmarks(prev => {
+      const updated = prev.filter(b => b.novelId !== novelId);
+      const bKey = getBookmarkStorageKey(authUser?.id);
+      localStorage.setItem(bKey, JSON.stringify(updated));
+      if (!authUser) {
+        localStorage.setItem('ashtl_bookmarks', JSON.stringify(updated));
+      }
+      return updated;
+    });
+
+    // Clean up reading history immediately
+    setHistory(prev => {
+      const updated = prev.filter(h => h.novelId !== novelId);
+      const hKey = getHistoryStorageKey(authUser?.id);
+      localStorage.setItem(hKey, JSON.stringify(updated));
+      if (!authUser) {
+        localStorage.setItem('ashtl_history', JSON.stringify(updated));
+      }
+      return updated;
+    });
+
+    if (supabase && isSupabaseConfigured) {
+      supabase.from('novels').delete().eq('id', novelId).then(({ error }) => {
+        if (error) {
+          console.error('Error deleting novel from Supabase', error);
+          showToast(`Database notice: ${error.message}`);
+        }
+      });
+    }
+    showToast(`Deleted "${novelToDelete?.title || 'Novel'}"`);
+  };
+
+  const handleTogglePublishNovel = (novelId: string) => {
+    setNovels(novels.map(n => {
+      if (n.id === novelId) {
+        const nextState = n.isPublished === false;
+        if (supabase && isSupabaseConfigured) {
+          supabase.from('novels').update({ is_published: nextState }).eq('id', novelId).then(({ error }) => {
+            if (error) console.error('Error updating publication status in Supabase', error);
+          });
+        }
+        showToast(`Novel "${n.title}" is now ${nextState ? 'Published' : 'Draft'}`);
+        return { ...n, isPublished: nextState };
+      }
+      return n;
+    }));
+  };
+
+  const handleSaveChapter = (novelId: string, chapter: Chapter, isNew: boolean) => {
+    setNovels(novels.map(n => {
+      if (n.id === novelId) {
+        let updatedChapters: Chapter[];
+        if (isNew) {
+          updatedChapters = [...n.chapters, chapter];
+        } else {
+          updatedChapters = n.chapters.map(c => c.id === chapter.id ? chapter : c);
+        }
+        const maxCh = Math.max(...updatedChapters.map(c => c.chapterNumber), 0);
+
+        if (supabase && isSupabaseConfigured) {
+          if (isNew) {
+            supabase.from('chapters').insert({
+              id: chapter.id,
+              novel_id: novelId,
+              chapter_number: chapter.chapterNumber,
+              title: chapter.title,
+              content: chapter.content,
+              word_count: chapter.wordCount,
+              is_published: chapter.isPublished !== false,
+              release_date: chapter.releaseDate
+            }).then(({ error }) => {
+              if (error) console.error('Error publishing chapter to Supabase', error);
+            });
+
+            supabase.from('novels').update({ latest_chapter: maxCh }).eq('id', novelId).then(({ error }) => {
+              if (error) console.error('Error updating novel latest chapter', error);
+            });
+          } else {
+            supabase.from('chapters').update({
+              chapter_number: chapter.chapterNumber,
+              title: chapter.title,
+              content: chapter.content,
+              word_count: chapter.wordCount,
+              is_published: chapter.isPublished !== false
+            }).eq('id', chapter.id).then(({ error }) => {
+              if (error) console.error('Error updating chapter in Supabase', error);
+            });
+          }
+        }
+
+        return {
+          ...n,
+          latestChapter: maxCh,
+          chapters: updatedChapters
+        };
+      }
+      return n;
+    }));
+    showToast(`Chapter ${chapter.chapterNumber} ${isNew ? 'published' : 'updated'} successfully!`);
+  };
+
+  const handleDeleteChapter = (novelId: string, chapterId: string) => {
+    setNovels(novels.map(n => {
+      if (n.id === novelId) {
+        const updatedChapters = n.chapters.filter(c => c.id !== chapterId);
+        const maxCh = updatedChapters.length > 0 ? Math.max(...updatedChapters.map(c => c.chapterNumber)) : 0;
+        if (supabase && isSupabaseConfigured) {
+          supabase.from('chapters').delete().eq('id', chapterId).then(({ error }) => {
+            if (error) console.error('Error deleting chapter from Supabase', error);
+          });
+          supabase.from('novels').update({ latest_chapter: maxCh }).eq('id', novelId).then(({ error }) => {
+            if (error) console.error('Error updating novel latest chapter', error);
+          });
+        }
+        return { ...n, latestChapter: maxCh, chapters: updatedChapters };
+      }
+      return n;
+    }));
+    showToast('Chapter deleted.');
+  };
+
+  const handleTogglePublishChapter = (novelId: string, chapterId: string) => {
+    setNovels(novels.map(n => {
+      if (n.id === novelId) {
+        const updatedChapters = n.chapters.map(c => {
+          if (c.id === chapterId) {
+            const nextPub = c.isPublished === false;
+            if (supabase && isSupabaseConfigured) {
+              supabase.from('chapters').update({ is_published: nextPub }).eq('id', chapterId).then(({ error }) => {
+                if (error) console.error('Error toggling chapter publication in Supabase', error);
+              });
+            }
+            showToast(`Chapter ${c.chapterNumber} is now ${nextPub ? 'Published' : 'Draft'}`);
+            return { ...c, isPublished: nextPub };
+          }
+          return c;
+        });
+        return { ...n, chapters: updatedChapters };
+      }
+      return n;
+    }));
+  };
+
+  const handleApproveComment = (id: string) => {
+    setComments(comments.map(c => c.id === id ? { ...c, status: 'approved' } : c));
+    if (supabase && isSupabaseConfigured) {
+      supabase.from('comments').update({ status: 'approved' }).eq('id', id).then(({ error }) => {
+        if (error) console.error('Error approving comment in Supabase', error);
+      });
+    }
+    showToast('Comment approved');
+  };
+
+  const handleFlagComment = (id: string) => {
+    setComments(comments.map(c => c.id === id ? { ...c, status: 'flagged' } : c));
+    if (supabase && isSupabaseConfigured) {
+      supabase.from('comments').update({ status: 'flagged' }).eq('id', id).then(({ error }) => {
+        if (error) console.error('Error flagging comment in Supabase', error);
+      });
+    }
+    showToast('Comment flagged');
+  };
+
+  const handleDeleteComment = (id: string) => {
+    setComments(comments.filter(c => c.id !== id));
+    if (supabase && isSupabaseConfigured) {
+      supabase.from('comments').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Error deleting comment in Supabase', error);
+      });
+    }
+    showToast('Comment deleted');
   };
 
   const handleSaveProfile = () => {
@@ -368,20 +942,31 @@ export default function App() {
       bio: editBio.trim(),
       avatarUrl: editAvatarUrl
     };
+    try {
+      localStorage.setItem('ashtl_user_profile', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save profile to localStorage:', e);
+      showToast('Image file too large to save. Please choose a smaller image.');
+      return;
+    }
     setUserProfile(updated);
-    localStorage.setItem('ashtl_user_profile', JSON.stringify(updated));
     setIsEditingProfile(false);
+
+    if (supabase && isSupabaseConfigured && authUser) {
+      supabase.from('profiles').update({
+        username: updated.username,
+        bio: updated.bio,
+        avatar_url: updated.avatarUrl
+      }).eq('id', authUser.id).then(({ error }) => {
+        if (error) console.error('Failed to sync profile update to Supabase:', error);
+      });
+    }
+
     showToast('Profile updated successfully!');
   };
 
   const openNovelDetail = (slug: string) => {
-    setSelectedNovelSlug(slug);
-    if (currentPage === 'home' || currentPage === 'novels' || currentPage === 'bookmarks' || currentPage === 'history' || currentPage === 'profile') {
-      setPreviousPage(currentPage);
-    }
-    setCurrentPage('novel-detail');
-    window.history.pushState({ page: 'novel-detail', slug }, '', '');
-    window.scrollTo(0, 0);
+    navigateTo('novel-detail', true, true, slug);
   };
 
   const openReader = (slug: string, chapterId?: string) => {
@@ -391,14 +976,7 @@ export default function App() {
       return;
     }
     const targetChapterId = chapterId || targetNovel.chapters[0].id;
-    setSelectedNovelSlug(slug);
-    setSelectedChapterId(targetChapterId);
-    if (currentPage === 'home' || currentPage === 'novels' || currentPage === 'novel-detail' || currentPage === 'profile') {
-      setPreviousPage(currentPage as any);
-    }
-    setCurrentPage('reader');
-    window.history.pushState({ page: 'reader', slug, chapterId: targetChapterId }, '', '');
-    window.scrollTo(0, 0);
+    navigateTo('reader', true, true, slug, targetChapterId);
   };
 
   // Save Settings Helper
@@ -414,30 +992,126 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Bookmark Toggle
+  const updateNovelBookmarksCount = (novelId: string, delta: number) => {
+    setNovels(prev => {
+      const updated = prev.map(n => {
+        if (n.id === novelId) {
+          const nextCount = Math.max(0, (n.bookmarksCount || 0) + delta);
+          return { ...n, bookmarksCount: nextCount };
+        }
+        return n;
+      });
+      localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+      return updated;
+    });
+
+    const client = supabase;
+    if (client && isSupabaseConfigured) {
+      client.rpc('sync_novel_bookmark_count', { novel_id: novelId, delta }).then(({ data, error }) => {
+        if (error) {
+          const target = novels.find(n => n.id === novelId);
+          if (target) {
+            const nextCount = Math.max(0, (target.bookmarksCount || 0) + delta);
+            client.from('novels').update({ bookmarks_count: nextCount }).eq('id', novelId).then();
+          }
+        } else if (typeof data === 'number') {
+          setNovels(prev => {
+            const updated = prev.map(n => n.id === novelId ? { ...n, bookmarksCount: data } : n);
+            localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+            return updated;
+          });
+        }
+      });
+    }
+  };
+
+  const incrementNovelView = (novelId: string) => {
+    setNovels(prev => {
+      const updated = prev.map(n => {
+        if (n.id === novelId) {
+          return { ...n, views: (n.views || 0) + 1 };
+        }
+        return n;
+      });
+      localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+      return updated;
+    });
+
+    const client = supabase;
+    if (client && isSupabaseConfigured) {
+      client.rpc('increment_novel_view', { novel_id: novelId }).then(({ data, error }) => {
+        if (error) {
+          const target = novels.find(n => n.id === novelId);
+          if (target) {
+            const nextViews = (target.views || 0) + 1;
+            client.from('novels').update({ views: nextViews }).eq('id', novelId).then();
+          }
+        } else if (typeof data === 'number') {
+          setNovels(prev => {
+            const updated = prev.map(n => n.id === novelId ? { ...n, views: data } : n);
+            localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+            return updated;
+          });
+        }
+      });
+    }
+  };
+
+  // Bookmark Management
   const toggleBookmark = (novel: Novel, chapterId?: string, chapterNum?: number) => {
     const existingIndex = bookmarks.findIndex(b => b.novelId === novel.id);
     let updated: BookmarkItem[];
+    const bKey = getBookmarkStorageKey(authUser?.id);
+
     if (existingIndex >= 0) {
       updated = bookmarks.filter(b => b.novelId !== novel.id);
       showToast(`Removed "${novel.title}" from Bookmarks`);
+      if (authUser && supabase && isSupabaseConfigured) {
+        deleteRemoteBookmark(authUser.id, novel.id);
+      }
+      updateNovelBookmarksCount(novel.id, -1);
     } else {
+      const chId = chapterId || novel.chapters[0]?.id || 'c1';
+      const chNum = chapterNum || 1;
       const newItem: BookmarkItem = {
         novelId: novel.id,
         novelTitle: novel.title,
         novelCover: novel.coverUrl,
-        lastReadChapterId: chapterId || novel.chapters[0]?.id || 'c1',
-        lastReadChapterNum: chapterNum || 1,
+        lastReadChapterId: chId,
+        lastReadChapterNum: chNum,
         timestamp: Date.now()
       };
       updated = [newItem, ...bookmarks];
       showToast(`Added "${novel.title}" to Bookmarks`);
+      if (authUser && supabase && isSupabaseConfigured) {
+        saveRemoteBookmark(authUser.id, novel.id, chId, chNum);
+      }
+      updateNovelBookmarksCount(novel.id, 1);
     }
     setBookmarks(updated);
-    localStorage.setItem('ashtl_bookmarks', JSON.stringify(updated));
+    localStorage.setItem(bKey, JSON.stringify(updated));
+    if (!authUser) {
+      localStorage.setItem('ashtl_bookmarks', JSON.stringify(updated));
+    }
   };
 
-  // History Helper
+  const handleRemoveBookmark = (novelId: string) => {
+    const bookmarkToRemove = bookmarks.find(b => b.novelId === novelId);
+    const updated = bookmarks.filter(b => b.novelId !== novelId);
+    setBookmarks(updated);
+    const bKey = getBookmarkStorageKey(authUser?.id);
+    localStorage.setItem(bKey, JSON.stringify(updated));
+    if (!authUser) {
+      localStorage.setItem('ashtl_bookmarks', JSON.stringify(updated));
+    }
+    if (authUser && supabase && isSupabaseConfigured) {
+      deleteRemoteBookmark(authUser.id, novelId);
+    }
+    updateNovelBookmarksCount(novelId, -1);
+    showToast(`Removed "${bookmarkToRemove?.novelTitle || 'Novel'}" from Bookmarks`);
+  };
+
+  // Reading History Management
   const trackReadingHistory = (novel: Novel, chapter: Chapter, progressPct: number) => {
     const filtered = history.filter(h => h.novelId !== novel.id);
     const updatedHistory: HistoryItem[] = [
@@ -453,130 +1127,54 @@ export default function App() {
       ...filtered
     ];
     setHistory(updatedHistory);
-    localStorage.setItem('ashtl_history', JSON.stringify(updatedHistory));
-  };
-
-  // Admin: Create Novel Handler
-  const handleCreateNovel = () => {
-    if (!newNovelTitle.trim() || !newNovelAuthor.trim()) {
-      showToast('Novel title and author are required.');
-      return;
+    const hKey = getHistoryStorageKey(authUser?.id);
+    localStorage.setItem(hKey, JSON.stringify(updatedHistory));
+    if (!authUser) {
+      localStorage.setItem('ashtl_history', JSON.stringify(updatedHistory));
     }
-
-    const slug = newNovelTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    const genresArray = newNovelGenres.split(',').map(g => g.trim()).filter(Boolean);
-    const altTitlesArray = newNovelAltTitles.split(',').map(t => t.trim()).filter(Boolean);
-    const defaultCover = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" fill="%23312e81"><rect width="400" height="600"/><text x="200" y="300" text-anchor="middle" fill="%23e0e7ff" font-size="24" font-family="sans-serif">No Cover</text></svg>');
-
-    const novelToAdd: Novel = {
-      id: `novel_${Date.now()}`,
-      slug: slug || `novel-${Date.now()}`,
-      title: newNovelTitle.trim(),
-      altTitles: altTitlesArray,
-      author: newNovelAuthor.trim(),
-      translator: newNovelTranslator.trim() || 'Staff Translator',
-      status: newNovelStatus,
-      originalLanguage: 'Chinese' as const,
-
-      genres: genresArray.length > 0 ? genresArray : ['Fantasy'],
-      rating: 5.0,
-      views: 0,
-      bookmarksCount: 0,
-      coverUrl: newNovelCoverData || defaultCover,
-      synopsis: newNovelSynopsis.trim() || 'No synopsis provided yet.',
-      latestChapter: 0,
-      chapters: [],
-      translatorNotes: newNovelNotes.trim() || undefined
-    };
-
-    setNovels([novelToAdd, ...novels]);
-    setAdminNovelId(novelToAdd.id);
-    setNewNovelTitle('');
-    setNewNovelAuthor('');
-    setNewNovelTranslator('');
-    setNewNovelGenres('Fantasy, Action');
-    setNewNovelCoverData('');
-    setNewNovelSynopsis('');
-    setNewNovelAltTitles('');
-    setNewNovelNotes('');
-    showToast(`Novel "${novelToAdd.title}" created successfully!`);
-
-    // Sync to Supabase cloud database if configured
-    if (supabase && isSupabaseConfigured) {
-      supabase.from('novels').insert({
-        id: novelToAdd.id,
-        slug: novelToAdd.slug,
-        title: novelToAdd.title,
-        alt_titles: novelToAdd.altTitles,
-        author: novelToAdd.author,
-        translator: novelToAdd.translator,
-        status: novelToAdd.status,
-        original_language: 'English',
-        genres: novelToAdd.genres,
-        rating: novelToAdd.rating,
-        views: novelToAdd.views,
-        bookmarks_count: novelToAdd.bookmarksCount,
-        cover_url: novelToAdd.coverUrl,
-        synopsis: novelToAdd.synopsis,
-        latest_chapter: novelToAdd.latestChapter
-      }).then(({ error }) => {
-        if (error) console.error('Error inserting novel into Supabase', error);
-      });
+    if (authUser && supabase && isSupabaseConfigured) {
+      saveRemoteHistory(authUser.id, novel.id, chapter.id, chapter.chapterNumber, Math.round(progressPct));
     }
   };
 
-  // Admin: Publish Chapter Handler
-  const handlePublishChapter = () => {
-    if (!adminChapterTitle.trim() || !adminChapterContent.trim()) {
-      showToast('Please provide both chapter title and content.');
-      return;
+  const handleRemoveHistoryItem = (novelId: string) => {
+    const itemToRemove = history.find(h => h.novelId === novelId);
+    const updated = history.filter(h => h.novelId !== novelId);
+    setHistory(updated);
+    const hKey = getHistoryStorageKey(authUser?.id);
+    localStorage.setItem(hKey, JSON.stringify(updated));
+    if (!authUser) {
+      localStorage.setItem('ashtl_history', JSON.stringify(updated));
     }
-    const targetNovel = novels.find(n => n.id === adminNovelId);
-    if (!targetNovel) {
-      showToast('Please select or create a novel first.');
-      return;
+    if (authUser && supabase && isSupabaseConfigured) {
+      deleteRemoteHistory(authUser.id, novelId);
     }
-
-    const newChapter: Chapter = {
-      id: `c_${Date.now()}`,
-      chapterNumber: targetNovel.chapters.length + 1,
-      title: adminChapterTitle.trim(),
-      content: adminChapterContent.trim(),
-      releaseDate: new Date().toISOString().split('T')[0],
-      wordCount: adminChapterContent.trim().split(/\s+/).filter(Boolean).length
-    };
-
-    setNovels(novels.map(n => n.id === adminNovelId ? {
-      ...n,
-      latestChapter: newChapter.chapterNumber,
-      chapters: [...n.chapters, newChapter]
-    } : n));
-
-    setAdminChapterTitle('');
-    setAdminChapterContent('');
-    showToast(`Published Chapter ${newChapter.chapterNumber} to "${targetNovel.title}"!`);
-
-    // Sync to Supabase cloud database if configured
-    if (supabase && isSupabaseConfigured) {
-      supabase.from('chapters').insert({
-        id: newChapter.id,
-        novel_id: adminNovelId,
-        chapter_number: newChapter.chapterNumber,
-        title: newChapter.title,
-        content: newChapter.content,
-        word_count: newChapter.wordCount,
-        release_date: new Date().toISOString()
-      }).then(({ error }) => {
-        if (error) console.error('Error publishing chapter to Supabase', error);
-      });
-
-      supabase.from('novels').update({
-        latest_chapter: newChapter.chapterNumber
-      }).eq('id', adminNovelId).then(({ error }) => {
-        if (error) console.error('Error updating novel latest chapter in Supabase', error);
-      });
-    }
+    showToast(`Removed "${itemToRemove?.novelTitle || 'Novel'}" from History`);
   };
+
+  const handleClearAllHistory = () => {
+    setHistory([]);
+    const hKey = getHistoryStorageKey(authUser?.id);
+    localStorage.removeItem(hKey);
+    if (!authUser) {
+      localStorage.removeItem('ashtl_history');
+    }
+    if (authUser && supabase && isSupabaseConfigured) {
+      deleteRemoteHistory(authUser.id);
+    }
+    showToast('Reading history cleared');
+  };
+
+  // Filtered views ensuring deleted novels never linger
+  const visibleBookmarks = useMemo(() => {
+    if (novels.length === 0) return bookmarks;
+    return bookmarks.filter(b => novels.some(n => n.id === b.novelId));
+  }, [bookmarks, novels]);
+
+  const visibleHistory = useMemo(() => {
+    if (novels.length === 0) return history;
+    return history.filter(h => novels.some(n => n.id === h.novelId));
+  }, [history, novels]);
 
   // Selected Novel Reference
   const currentNovel = useMemo(() => {
@@ -589,12 +1187,32 @@ export default function App() {
     return currentNovel.chapters.find(c => c.id === selectedChapterId) || currentNovel.chapters[0] || null;
   }, [currentNovel, selectedChapterId]);
 
-  // Track history when chapter opens
+  const viewedChaptersRef = useRef<Set<string>>(new Set());
+
+  // Track history and views when chapter opens
   useEffect(() => {
     if (currentPage === 'reader' && currentNovel && currentChapter) {
       trackReadingHistory(currentNovel, currentChapter, 100);
+      const viewKey = `${currentNovel.id}_${currentChapter.id}`;
+      if (!viewedChaptersRef.current.has(viewKey)) {
+        viewedChaptersRef.current.add(viewKey);
+        incrementNovelView(currentNovel.id);
+      }
     }
   }, [currentPage, currentNovel, currentChapter]);
+
+  // Spotlight Novel: Highest Views among published novels
+  const spotlightNovel = useMemo(() => {
+    const published = novels.filter(n => n.isPublished !== false);
+    if (published.length === 0) return null;
+    return [...published].sort((a, b) => (b.views || 0) - (a.views || 0))[0];
+  }, [novels]);
+
+  // Most Popular Novels: Ranked by Views descending
+  const mostPopularNovels = useMemo(() => {
+    const published = novels.filter(n => n.isPublished !== false);
+    return [...published].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 8);
+  }, [novels]);
 
   // Filtered Novels Computation
   const filteredNovels = useMemo(() => {
@@ -609,11 +1227,111 @@ export default function App() {
 
       return matchesSearch && matchesGenre && matchesStatus;
     }).sort((a, b) => {
-      if (sortBy === 'popular') return b.views - a.views;
-      if (sortBy === 'rating') return b.rating - a.rating;
-      return b.id.localeCompare(a.id);
+      if (sortBy === 'popular') return (b.views || 0) - (a.views || 0);
+      if (sortBy === 'bookmarks') return (b.bookmarksCount || 0) - (a.bookmarksCount || 0);
+      if (sortBy === 'latest') return (b.latestChapter || 0) - (a.latestChapter || 0);
+      return b.title.localeCompare(a.title);
     });
   }, [novels, searchQuery, selectedGenre, selectedStatus, sortBy]);
+
+  // Dedicated Secure Admin Route Rendering
+  if (currentRoute.type === 'admin') {
+    if (adminUnauthorizedEmail) {
+      return (
+        <AdminAccessDenied
+          userEmail={adminUnauthorizedEmail}
+          onSignOut={handleAdminSignOut}
+          onBackToSite={() => navigateTo('home')}
+        />
+      );
+    }
+
+    if (currentRoute.section === 'login') {
+      return (
+        <AdminLogin
+          onBackToSite={() => navigateTo('home')}
+          onDevBypass={() => {
+            setIsAdminAuthorized(true);
+            localStorage.setItem('ashtl_admin_session', 'true');
+            showToast('Dev Admin Mode Activated');
+            navigateToAdmin('dashboard');
+          }}
+        />
+      );
+    }
+
+    if (isAdminAuthorized) {
+      return (
+        <AdminLayout
+          currentSection={currentRoute.section as AdminSection}
+          onNavigateSection={(sec) => navigateToAdmin(sec)}
+          onSignOut={handleAdminSignOut}
+          onViewPublicSite={() => navigateTo('home')}
+          adminEmail={adminUser?.email || 'admin@ashtl.com'}
+          adminAvatar={adminUser?.user_metadata?.avatar_url || adminUser?.user_metadata?.picture}
+        >
+          {currentRoute.section === 'dashboard' && (
+            <AdminDashboard
+              novels={novels}
+              comments={comments}
+              onNavigateSection={(sec) => navigateToAdmin(sec)}
+              onOpenCreateNovel={() => navigateToAdmin('novels')}
+              onOpenCreateChapter={() => navigateToAdmin('chapters')}
+            />
+          )}
+          {currentRoute.section === 'novels' && (
+            <AdminNovels
+              novels={novels}
+              onSaveNovel={handleSaveNovel}
+              onDeleteNovel={handleDeleteNovel}
+              onTogglePublishNovel={handleTogglePublishNovel}
+              onViewNovelOnSite={(slug) => navigateTo('novel-detail', true, true, slug)}
+            />
+          )}
+          {currentRoute.section === 'chapters' && (
+            <AdminChapters
+              novels={novels}
+              selectedNovelId={adminNovelId}
+              onSaveChapter={handleSaveChapter}
+              onDeleteChapter={handleDeleteChapter}
+              onTogglePublishChapter={handleTogglePublishChapter}
+              onReadChapterOnSite={(slug, chId) => navigateTo('reader', true, true, slug, chId)}
+            />
+          )}
+          {currentRoute.section === 'comments' && (
+            <AdminComments
+              comments={comments}
+              onApproveComment={handleApproveComment}
+              onFlagComment={handleFlagComment}
+              onDeleteComment={handleDeleteComment}
+            />
+          )}
+          {currentRoute.section === 'settings' && (
+            <AdminSettings
+              adminEmail={adminUser?.email || 'admin@ashtl.com'}
+              adminName={adminUser?.user_metadata?.full_name || adminUser?.user_metadata?.name || 'Administrator'}
+              adminAvatar={adminUser?.user_metadata?.avatar_url || adminUser?.user_metadata?.picture}
+              userId={adminUser?.id || 'admin-local'}
+              createdAt={adminUser?.created_at}
+              onSignOut={handleAdminSignOut}
+            />
+          )}
+        </AdminLayout>
+      );
+    }
+
+    return (
+      <AdminLogin
+        onBackToSite={() => navigateTo('home')}
+        onDevBypass={() => {
+          setIsAdminAuthorized(true);
+          localStorage.setItem('ashtl_admin_session', 'true');
+          showToast('Dev Admin Mode Activated');
+          navigateToAdmin('dashboard');
+        }}
+      />
+    );
+  }
 
   return (
     <div className={`min-h-screen font-sans transition-colors duration-200 ${
@@ -673,9 +1391,9 @@ export default function App() {
               >
                 <Bookmark className="w-4 h-4" />
                 <span>Bookmarks</span>
-                {bookmarks.length > 0 && (
+                {visibleBookmarks.length > 0 && (
                   <span className="ml-1 px-1.5 py-0.2 bg-violet-600 text-white text-[10px] rounded-full font-bold">
-                    {bookmarks.length}
+                    {visibleBookmarks.length}
                   </span>
                 )}
               </button>
@@ -693,29 +1411,36 @@ export default function App() {
                 <img src={userProfile.avatarUrl} alt="" className="w-5 h-5 rounded-full object-cover border border-violet-500/40" />
                 <span>Profile</span>
               </button>
-              {isCreatorAuthenticated ? (
+              {isAdminAuthorized && (
                 <button 
-                  onClick={() => navigateTo('admin')}
-                  className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${currentPage === 'admin' ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30' : 'text-amber-700 dark:text-amber-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30'}`}
-                  title="Creator Admin Dashboard"
+                  onClick={() => navigateToAdmin('dashboard')}
+                  className="px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1.5 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 cursor-pointer shadow-xs"
+                  title="Open Admin Portal"
                 >
                   <Shield className="w-4 h-4 text-amber-500" />
-                  <span>Admin</span>
-                </button>
-              ) : (
-                <button 
-                  onClick={() => navigateTo('admin')}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center space-x-1 cursor-pointer text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800/40"
-                  title="Creator Verification Entrance"
-                >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>Creator</span>
+                  <span>Admin Tools</span>
                 </button>
               )}
             </nav>
 
             {/* Header Right Actions */}
             <div className="flex items-center space-x-3">
+              {/* Google Sign In Button for Guests */}
+              {!authUser && (
+                <button
+                  onClick={() => signInWithGoogle(window.location.pathname)}
+                  className="hidden sm:inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white transition-colors cursor-pointer shadow-sm shadow-violet-600/20"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                    <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                    <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                    <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                  </svg>
+                  <span>Sign In</span>
+                </button>
+              )}
+
               {/* Theme Toggle */}
               <button
                 onClick={toggleTheme}
@@ -757,8 +1482,8 @@ export default function App() {
                 className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
               >
                 <span>Bookmarks</span>
-                {bookmarks.length > 0 && (
-                  <span className="px-2 py-0.5 bg-violet-600 text-white text-xs rounded-full">{bookmarks.length}</span>
+                {visibleBookmarks.length > 0 && (
+                  <span className="px-2 py-0.5 bg-violet-600 text-white text-xs rounded-full">{visibleBookmarks.length}</span>
                 )}
               </button>
               <button
@@ -774,22 +1499,32 @@ export default function App() {
                 <User className="w-4 h-4 text-violet-500" />
                 <span>My Profile</span>
               </button>
-              <button
-                onClick={() => { navigateTo('admin'); setIsMobileMenuOpen(false); }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center space-x-2"
-              >
-                {isCreatorAuthenticated ? (
-                  <>
-                    <Shield className="w-4 h-4 text-amber-500" />
-                    <span>Admin Dashboard (Creator)</span>
-                  </>
-                ) : (
-                  <>
-                    <Lock className="w-4 h-4 text-amber-500" />
-                    <span>Creator Portal</span>
-                  </>
-                )}
-              </button>
+              {isAdminAuthorized && (
+                <button
+                  onClick={() => { navigateToAdmin('dashboard'); setIsMobileMenuOpen(false); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 flex items-center space-x-2 border border-amber-500/20"
+                >
+                  <Shield className="w-4 h-4 text-amber-500" />
+                  <span>Admin Tools & Dashboard</span>
+                </button>
+              )}
+              {!authUser ? (
+                <button
+                  onClick={() => { signInWithGoogle(window.location.pathname); setIsMobileMenuOpen(false); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 flex items-center space-x-2 cursor-pointer"
+                >
+                  <User className="w-4 h-4" />
+                  <span>Sign In with Google</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => { handleUserLogout(); setIsMobileMenuOpen(false); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 flex items-center space-x-2 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Log Out</span>
+                </button>
+              )}
               <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-around text-xs text-slate-700 dark:text-slate-400 font-medium">
                 <button onClick={() => { navigateTo('about'); setIsMobileMenuOpen(false); }}>About</button>
                 <button onClick={() => { navigateTo('dmca'); setIsMobileMenuOpen(false); }}>DMCA</button>
@@ -801,6 +1536,19 @@ export default function App() {
       )}
 
       <main className="min-h-[calc(100vh-16rem)]">
+        {/* AUTH CALLBACK VIEW */}
+        {currentPage === 'auth-callback' && (
+          <div className="min-h-[60vh] flex flex-col items-center justify-center px-4 py-16 text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center animate-spin">
+              <Sparkles className="w-6 h-6 text-violet-600 dark:text-violet-400" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Connecting with Google...</h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400">Verifying your authentication credentials and redirecting...</p>
+            </div>
+          </div>
+        )}
+
         {/* HOMEPAGE VIEW */}
         {currentPage === 'home' && (
           <div className="space-y-12 pb-16">
@@ -860,35 +1608,45 @@ export default function App() {
 
             {/* Featured Hero Novel Spotlight / Empty State */}
             <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              {novels.length > 0 ? (
+              {spotlightNovel ? (
                 <div className="relative rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#181a20] shadow-xl p-6 sm:p-8 grid md:grid-cols-12 gap-8 items-center">
                   <div className="md:col-span-4 lg:col-span-3 flex justify-center">
                     <img
-                      src={novels[0].coverUrl}
-                      alt={novels[0].title}
+                      src={spotlightNovel.coverUrl}
+                      alt={spotlightNovel.title}
                       className="w-48 sm:w-56 md:w-full h-72 object-cover rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700/50"
                     />
                   </div>
                   <div className="md:col-span-8 lg:col-span-9 space-y-4 text-left">
                     <div className="flex items-center space-x-2 text-xs font-semibold text-amber-500 uppercase tracking-wider">
-                      <Star className="w-4 h-4 fill-amber-500" />
-                      <span>Featured Spotlight Novel</span>
+                      <Flame className="w-4 h-4 fill-amber-500 text-amber-500" />
+                      <span>Featured Spotlight Novel • Most Viewed</span>
                     </div>
                     <h2 className="text-3xl font-bold text-slate-900 dark:text-white">
-                      {novels[0].title}
+                      {spotlightNovel.title}
                     </h2>
                     <p className="text-sm text-slate-800 dark:text-slate-400 flex items-center space-x-3 font-medium">
-                      <span>By {novels[0].author}</span>
+                      <span>By {spotlightNovel.author}</span>
                       <span>•</span>
-                      <span>TL: {novels[0].translator}</span>
+                      <span>TL: {spotlightNovel.translator}</span>
                       <span>•</span>
-                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">{novels[0].status}</span>
+                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">{spotlightNovel.status}</span>
                     </p>
+                    <div className="flex items-center space-x-4 text-xs font-bold">
+                      <span className="flex items-center space-x-1.5 text-violet-600 dark:text-violet-400">
+                        <Eye className="w-4 h-4" />
+                        <span>{(spotlightNovel.views || 0).toLocaleString()} views</span>
+                      </span>
+                      <span className="flex items-center space-x-1.5 text-amber-600 dark:text-amber-400">
+                        <Bookmark className="w-4 h-4 fill-amber-500/20" />
+                        <span>{(spotlightNovel.bookmarksCount || 0).toLocaleString()} bookmarks</span>
+                      </span>
+                    </div>
                     <p className="text-sm text-slate-800 dark:text-slate-300 line-clamp-3 leading-relaxed">
-                      {novels[0].synopsis}
+                      {spotlightNovel.synopsis}
                     </p>
                     <div className="flex flex-wrap gap-2 pt-1">
-                      {novels[0].genres.map(g => (
+                      {spotlightNovel.genres.map(g => (
                         <span key={g} className="px-2.5 py-1 bg-slate-200/90 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-md text-xs font-semibold">
                           {g}
                         </span>
@@ -896,15 +1654,15 @@ export default function App() {
                     </div>
                     <div className="pt-4 flex flex-wrap items-center gap-3">
                       <button
-                        onClick={() => openReader(novels[0].slug, novels[0].chapters[0]?.id)}
-                        disabled={novels[0].chapters.length === 0}
+                        onClick={() => openReader(spotlightNovel.slug, spotlightNovel.chapters[0]?.id)}
+                        disabled={spotlightNovel.chapters.length === 0}
                         className="px-6 py-3 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-lg shadow-violet-600/30 flex items-center space-x-2 transition-transform active:scale-95 cursor-pointer"
                       >
                         <Play className="w-4 h-4 fill-white" />
                         <span>Start Reading Ch. 1</span>
                       </button>
                       <button
-                        onClick={() => openNovelDetail(novels[0].slug)}
+                        onClick={() => openNovelDetail(spotlightNovel.slug)}
                         className="px-5 py-3 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                       >
                         View Details
@@ -919,18 +1677,109 @@ export default function App() {
                   </div>
                   <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Ready for Your Translated Novels</h2>
                   <p className="text-sm text-slate-800 dark:text-slate-300 max-w-xl mx-auto font-medium">
-                    The platform is set up with dual-language reading and customization features. Use the Admin Dashboard to publish your translated web novels and chapters.
+                    The platform is set up with high-quality English reading and customization features. Check back soon for newly published chapters!
                   </p>
                   <button
-                    onClick={() => navigateTo('admin')}
+                    onClick={() => navigateTo('novels')}
                     className="px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white font-bold text-sm rounded-xl shadow-md transition-colors cursor-pointer inline-flex items-center space-x-2"
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>Add First Translated Novel in Admin</span>
+                    <BookOpen className="w-4 h-4" />
+                    <span>Browse Catalog</span>
                   </button>
                 </div>
               )}
             </section>
+
+            {/* Most Popular Novels Section (Ranked by Views) */}
+            {mostPopularNovels.length > 0 && (
+              <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
+                  <div>
+                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center space-x-2">
+                      <Flame className="w-5 h-5 text-amber-500 fill-amber-500" />
+                      <span>Most Popular</span>
+                    </h3>
+                    <p className="text-xs text-slate-700 dark:text-slate-400 font-medium">Top read web novels ranked by reader views</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSortBy('popular');
+                      navigateTo('novels');
+                    }}
+                    className="text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline flex items-center space-x-1 cursor-pointer"
+                  >
+                    <span>View All</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-4 sm:gap-6">
+                  {mostPopularNovels.map((novel, idx) => (
+                    <div
+                      key={novel.id}
+                      className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#17191f] overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col justify-between relative"
+                    >
+                      <div className="absolute top-2 left-2 z-10 px-2 py-0.5 bg-amber-500 text-slate-950 text-[11px] font-black rounded-md shadow-md flex items-center space-x-1">
+                        <span>#{idx + 1}</span>
+                      </div>
+
+                      <div>
+                        <div 
+                          onClick={() => openNovelDetail(novel.slug)}
+                          className="relative h-56 sm:h-64 w-full overflow-hidden cursor-pointer bg-slate-800"
+                        >
+                          <img
+                            src={novel.coverUrl}
+                            alt={novel.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          />
+                          <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-violet-600 text-white text-[10px] font-bold rounded-md">
+                            Ch. {novel.latestChapter}
+                          </div>
+                        </div>
+
+                        <div className="p-3.5 space-y-2 text-left">
+                          <h4 
+                            onClick={() => openNovelDetail(novel.slug)}
+                            className="font-bold text-sm sm:text-base text-slate-900 dark:text-white line-clamp-1 cursor-pointer hover:text-violet-600 transition-colors"
+                          >
+                            {novel.title}
+                          </h4>
+                          <div className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-400">
+                            <span className="flex items-center space-x-1 text-violet-600 dark:text-violet-400 font-bold">
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>{(novel.views || 0).toLocaleString()}</span>
+                            </span>
+                            <span className="flex items-center space-x-1 text-amber-600 dark:text-amber-400 font-semibold text-[11px]">
+                              <Bookmark className="w-3 h-3" />
+                              <span>{novel.bookmarksCount || 0}</span>
+                            </span>
+                            <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-bold">{novel.status}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {novel.genres.slice(0, 2).map((g) => (
+                              <span key={g} className="px-2 py-0.5 bg-slate-200/90 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-[10px] rounded-md font-semibold">
+                                {g}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-3 pt-0 flex items-center justify-between border-t border-slate-100 dark:border-slate-800/50 mt-2">
+                        <button
+                          onClick={() => openReader(novel.slug, novel.chapters[0]?.id)}
+                          className="w-full py-2 bg-violet-100 hover:bg-violet-600 text-violet-800 hover:text-white dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-600 dark:hover:text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center space-x-1 cursor-pointer"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          <span>{novel.chapters.length > 0 ? 'Read Chapter' : 'View Novel'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* Recently Updated Grid Section */}
             <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
@@ -992,9 +1841,13 @@ export default function App() {
                             {novel.title}
                           </h4>
                           <div className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-400">
-                            <span className="flex items-center space-x-1 text-amber-600 dark:text-amber-400 font-bold">
-                              <Star className="w-3.5 h-3.5 fill-amber-500" />
-                              <span>{novel.rating}</span>
+                            <span className="flex items-center space-x-1 text-violet-600 dark:text-violet-400 font-bold">
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>{(novel.views || 0).toLocaleString()}</span>
+                            </span>
+                            <span className="flex items-center space-x-1 text-amber-600 dark:text-amber-400 font-semibold text-[11px]">
+                              <Bookmark className="w-3 h-3" />
+                              <span>{novel.bookmarksCount || 0}</span>
                             </span>
                             <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-bold">{novel.status}</span>
                           </div>
@@ -1091,9 +1944,9 @@ export default function App() {
                   onChange={(e) => setSortBy(e.target.value as any)}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500 font-semibold cursor-pointer"
                 >
-                  <option value="popular">Sort: Most Popular</option>
+                  <option value="popular">Sort: Most Popular (Views)</option>
+                  <option value="bookmarks">Sort: Most Bookmarked</option>
                   <option value="latest">Sort: Recently Added</option>
-                  <option value="rating">Sort: Highest Rated</option>
                 </select>
               </div>
             </div>
@@ -1105,17 +1958,10 @@ export default function App() {
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">No Novels Found</h3>
                 <p className="text-xs text-slate-800 dark:text-slate-300 font-medium">
                   {novels.length === 0 
-                    ? 'No novels exist in the catalog yet. Use the Admin Dashboard to add new translated titles.'
+                    ? 'No novels have been published in the catalog yet. Please check back soon!'
                     : 'Try adjusting your filters or search keywords.'}
                 </p>
-                {novels.length === 0 ? (
-                  <button
-                    onClick={() => navigateTo('admin')}
-                    className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg shadow-sm cursor-pointer"
-                  >
-                    Go to Admin Dashboard
-                  </button>
-                ) : (
+                {novels.length > 0 && (
                   <button
                     onClick={() => {
                       setSearchQuery('');
@@ -1151,12 +1997,16 @@ export default function App() {
                         {novel.title}
                       </h4>
                       <p className="text-[11px] text-slate-800 dark:text-slate-300 line-clamp-1 font-semibold">{novel.author}</p>
-                      <div className="flex items-center justify-between text-[11px] pt-1">
-                        <span className="text-amber-600 dark:text-amber-400 font-bold flex items-center space-x-0.5">
-                          <Star className="w-3 h-3 fill-amber-500" />
-                          <span>{novel.rating}</span>
+                      <div className="flex items-center justify-between text-[11px] pt-1 text-slate-700 dark:text-slate-300">
+                        <span className="text-violet-600 dark:text-violet-400 font-bold flex items-center space-x-1">
+                          <Eye className="w-3 h-3" />
+                          <span>{(novel.views || 0).toLocaleString()}</span>
                         </span>
-                        <span className="text-slate-800 dark:text-slate-300 font-bold">Ch. {novel.latestChapter}</span>
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold flex items-center space-x-0.5">
+                          <Bookmark className="w-3 h-3" />
+                          <span>{novel.bookmarksCount || 0}</span>
+                        </span>
+                        <span className="font-bold">Ch. {novel.latestChapter}</span>
                       </div>
                     </div>
                   </div>
@@ -1221,7 +2071,7 @@ export default function App() {
                     </div>
 
                     {/* Metadata Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 rounded-xl bg-slate-100 dark:bg-slate-900/50 text-xs border border-slate-300/80 dark:border-slate-800">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 p-4 rounded-xl bg-slate-100 dark:bg-slate-900/50 text-xs border border-slate-300/80 dark:border-slate-800">
                       <div>
                         <span className="text-slate-800 dark:text-slate-400 block font-semibold">Author</span>
                         <span className="font-bold text-slate-950 dark:text-slate-200">{currentNovel.author}</span>
@@ -1233,6 +2083,20 @@ export default function App() {
                       <div>
                         <span className="text-slate-800 dark:text-slate-400 block font-semibold">Status</span>
                         <span className="font-bold text-emerald-700 dark:text-emerald-400">{currentNovel.status}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-800 dark:text-slate-400 block font-semibold">Total Views</span>
+                        <span className="font-bold text-violet-700 dark:text-violet-400 flex items-center space-x-1">
+                          <Eye className="w-3.5 h-3.5 inline" />
+                          <span>{(currentNovel.views || 0).toLocaleString()}</span>
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-800 dark:text-slate-400 block font-semibold">Bookmarks</span>
+                        <span className="font-bold text-amber-600 dark:text-amber-400 flex items-center space-x-1">
+                          <Bookmark className="w-3.5 h-3.5 inline" />
+                          <span>{(currentNovel.bookmarksCount || 0).toLocaleString()}</span>
+                        </span>
                       </div>
                     </div>
 
@@ -1300,12 +2164,6 @@ export default function App() {
                   {currentNovel.chapters.length === 0 ? (
                     <div className="py-8 text-center text-slate-700 dark:text-slate-400 text-xs space-y-2 font-medium">
                       <p>No chapters released yet for this novel.</p>
-                      <button
-                        onClick={() => navigateTo('admin')}
-                        className="text-violet-600 dark:text-violet-400 hover:underline font-semibold cursor-pointer"
-                      >
-                        Upload chapters via Admin
-                      </button>
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -1585,11 +2443,11 @@ export default function App() {
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
               <h1 className="text-2xl font-bold flex items-center space-x-2 text-slate-900 dark:text-white">
                 <Bookmark className="w-6 h-6 text-amber-500 fill-amber-500/20" />
-                <span>My Saved Bookmarks ({bookmarks.length})</span>
+                <span>My Saved Bookmarks ({visibleBookmarks.length})</span>
               </h1>
             </div>
 
-            {bookmarks.length === 0 ? (
+            {visibleBookmarks.length === 0 ? (
               <div className="py-16 text-center space-y-3">
                 <BookOpen className="w-12 h-12 text-slate-400 mx-auto" />
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">No Bookmarks Saved Yet</h3>
@@ -1603,28 +2461,38 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {bookmarks.map((b) => (
+                {visibleBookmarks.map((b) => (
                   <div
                     key={b.novelId}
-                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] flex space-x-4 items-center shadow-sm"
+                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] flex space-x-4 items-center shadow-sm relative group"
                   >
-                    <img src={b.novelCover} alt={b.novelTitle} className="w-16 h-20 object-cover rounded-xl" />
+                    <img src={b.novelCover} alt={b.novelTitle} className="w-16 h-20 object-cover rounded-xl shrink-0" />
                     <div className="space-y-1 flex-1 min-w-0">
                       <h4 className="font-bold text-sm truncate text-slate-900 dark:text-white">{b.novelTitle}</h4>
                       <p className="text-xs text-violet-800 dark:text-violet-400 font-bold">Ch. {b.lastReadChapterNum}</p>
-                      <button
-                        onClick={() => {
-                          const target = novels.find(n => n.id === b.novelId);
-                          if (target) {
-                            openReader(target.slug, b.lastReadChapterId);
-                          } else {
-                            showToast('Novel no longer available');
-                          }
-                        }}
-                        className="px-3 py-1 bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-semibold rounded-md mt-1 cursor-pointer"
-                      >
-                        Continue Reading
-                      </button>
+                      <div className="flex items-center space-x-2 pt-1">
+                        <button
+                          onClick={() => {
+                            const target = novels.find(n => n.id === b.novelId);
+                            if (target) {
+                              openReader(target.slug, b.lastReadChapterId);
+                            } else {
+                              showToast('Novel no longer available');
+                            }
+                          }}
+                          className="px-3 py-1 bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-semibold rounded-md cursor-pointer"
+                        >
+                          Continue Reading
+                        </button>
+                        <button
+                          onClick={() => handleRemoveBookmark(b.novelId)}
+                          className="p-1 text-slate-400 hover:text-rose-500 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
+                          title="Remove from Bookmarks"
+                          aria-label={`Remove ${b.novelTitle} from bookmarks`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1652,12 +2520,9 @@ export default function App() {
                 <History className="w-6 h-6 text-violet-500" />
                 <span>Reading History</span>
               </h1>
-              {history.length > 0 && (
+              {visibleHistory.length > 0 && (
                 <button
-                  onClick={() => {
-                    setHistory([]);
-                    localStorage.removeItem('ashtl_history');
-                  }}
+                  onClick={handleClearAllHistory}
                   className="text-xs text-rose-500 hover:underline flex items-center space-x-1 cursor-pointer font-semibold"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -1666,37 +2531,47 @@ export default function App() {
               )}
             </div>
 
-            {history.length === 0 ? (
+            {visibleHistory.length === 0 ? (
               <div className="py-16 text-center space-y-2 text-slate-700 dark:text-slate-400 text-xs font-medium">
                 <p>No reading history recorded yet.</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {history.map((item) => (
+                {visibleHistory.map((item) => (
                   <div
                     key={item.novelId}
-                    className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] flex items-center justify-between"
+                    className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] flex items-center justify-between gap-3"
                   >
-                    <div className="flex items-center space-x-3">
-                      <img src={item.novelCover} alt="" className="w-10 h-12 object-cover rounded-md" />
-                      <div>
-                        <h4 className="font-bold text-sm text-slate-900 dark:text-white">{item.novelTitle}</h4>
+                    <div className="flex items-center space-x-3 min-w-0">
+                      <img src={item.novelCover} alt="" className="w-10 h-12 object-cover rounded-md shrink-0" />
+                      <div className="min-w-0">
+                        <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">{item.novelTitle}</h4>
                         <p className="text-xs text-slate-800 dark:text-slate-300 font-medium">Chapter {item.lastReadChapterNum}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => {
-                        const target = novels.find(n => n.id === item.novelId);
-                        if (target) {
-                          openReader(target.slug, item.lastReadChapterId);
-                        } else {
-                          showToast('Novel no longer available');
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-violet-100 hover:bg-violet-600 text-violet-800 hover:text-white dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-600 dark:hover:text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
-                    >
-                      Resume
-                    </button>
+                    <div className="flex items-center space-x-2 shrink-0">
+                      <button
+                        onClick={() => {
+                          const target = novels.find(n => n.id === item.novelId);
+                          if (target) {
+                            openReader(target.slug, item.lastReadChapterId);
+                          } else {
+                            showToast('Novel no longer available');
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-violet-100 hover:bg-violet-600 text-violet-800 hover:text-white dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-600 dark:hover:text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                      >
+                        Resume
+                      </button>
+                      <button
+                        onClick={() => handleRemoveHistoryItem(item.novelId)}
+                        className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
+                        title="Remove from history"
+                        aria-label={`Remove ${item.novelTitle} from history`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1718,6 +2593,33 @@ export default function App() {
               </button>
             </div>
 
+            {/* Google Sign In Callout for Guests */}
+            {!authUser && (
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-violet-600/10 via-indigo-600/10 to-amber-500/10 border border-violet-500/20 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="space-y-1 text-center sm:text-left">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center justify-center sm:justify-start space-x-2">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span>Sync with Google Account</span>
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Sign in to preserve your reading streak, sync bookmarks, and personalize your translation experience across devices.
+                  </p>
+                </div>
+                <button
+                  onClick={() => signInWithGoogle('/profile')}
+                  className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold rounded-xl text-xs transition-colors flex items-center space-x-2 shrink-0 cursor-pointer shadow-sm"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.15z" />
+                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.24v3.15C3.26 21.36 7.33 24 12 24z" />
+                    <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.24C.45 8.16 0 9.97 0 12s.45 3.84 1.24 5.42l4.04-3.15z" />
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.24 6.58l4.04 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+                  </svg>
+                  <span>Continue with Google</span>
+                </button>
+              </div>
+            )}
+
             {/* Profile Header Banner */}
             <div className="p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] shadow-sm relative overflow-hidden">
               <div className="flex flex-col sm:flex-row items-center sm:items-start space-y-4 sm:space-y-0 sm:space-x-6 text-center sm:text-left">
@@ -1729,7 +2631,14 @@ export default function App() {
                     className="w-24 h-24 rounded-2xl object-cover border-2 border-violet-500/50 shadow-md"
                   />
                   <button
-                    onClick={() => setIsEditingProfile(!isEditingProfile)}
+                    onClick={() => {
+                      if (!isEditingProfile) {
+                        setEditUsername(userProfile.username);
+                        setEditBio(userProfile.bio);
+                        setEditAvatarUrl(userProfile.avatarUrl);
+                      }
+                      setIsEditingProfile(!isEditingProfile);
+                    }}
                     className="absolute -bottom-2 -right-2 p-1.5 bg-violet-600 text-white rounded-lg shadow hover:bg-violet-700 transition-colors cursor-pointer"
                     title="Edit Profile"
                   >
@@ -1743,10 +2652,10 @@ export default function App() {
                     <div>
                       <h1 className="text-2xl font-black text-slate-900 dark:text-white flex items-center justify-center sm:justify-start space-x-2">
                         <span>{userProfile.username}</span>
-                        {isCreatorAuthenticated ? (
+                        {userProfile.role === 'admin' ? (
                           <span className="px-2.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[11px] font-extrabold rounded-full flex items-center space-x-1">
                             <Shield className="w-3 h-3 text-amber-500" />
-                            <span>Creator / Translator</span>
+                            <span>Administrator</span>
                           </span>
                         ) : (
                           <span className="px-2.5 py-0.5 bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/30 text-[11px] font-extrabold rounded-full flex items-center space-x-1">
@@ -1755,17 +2664,49 @@ export default function App() {
                           </span>
                         )}
                       </h1>
+                      {authUser?.email && (
+                        <p className="text-[11px] font-mono text-violet-600 dark:text-violet-400 font-semibold">
+                          {authUser.email}
+                        </p>
+                      )}
                       <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-xl font-medium">
                         {userProfile.bio}
                       </p>
                     </div>
 
-                    <button
-                      onClick={() => setIsEditingProfile(!isEditingProfile)}
-                      className="px-3.5 py-1.5 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 transition-colors cursor-pointer self-center sm:self-auto"
-                    >
-                      {isEditingProfile ? 'Cancel Edit' : 'Edit Profile'}
-                    </button>
+                    <div className="flex items-center gap-2 self-center sm:self-auto">
+                      <button
+                        onClick={() => {
+                          if (!isEditingProfile) {
+                            setEditUsername(userProfile.username);
+                            setEditBio(userProfile.bio);
+                            setEditAvatarUrl(userProfile.avatarUrl);
+                          }
+                          setIsEditingProfile(!isEditingProfile);
+                        }}
+                        className="px-3.5 py-1.5 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 transition-colors cursor-pointer"
+                      >
+                        {isEditingProfile ? 'Cancel Edit' : 'Edit Profile'}
+                      </button>
+                      {(isAdminAuthorized || userProfile.role === 'admin') && (
+                        <button
+                          onClick={() => navigateToAdmin('dashboard')}
+                          className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-amber-500/20 cursor-pointer flex items-center space-x-1.5"
+                          title="Access Admin Management Portal"
+                        >
+                          <Shield className="w-3.5 h-3.5" />
+                          <span>Admin Portal</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={handleUserLogout}
+                        className="px-3.5 py-1.5 border border-rose-200 dark:border-rose-900/50 bg-rose-50/60 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                        title="Log Out of AshTL"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Log Out</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Quick Meta Badges */}
@@ -1782,7 +2723,7 @@ export default function App() {
                     <span>•</span>
                     <span className="flex items-center space-x-1">
                       <BookOpen className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>{history.length} Chapters Read</span>
+                      <span>{visibleHistory.length} Chapters Read</span>
                     </span>
                   </div>
                 </div>
@@ -1803,14 +2744,47 @@ export default function App() {
                         placeholder="Your reader name"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold text-slate-700 dark:text-slate-300">Avatar Image URL</label>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="font-semibold text-slate-700 dark:text-slate-300">Profile Picture</label>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400">Max 2MB (JPG, PNG, WebP)</span>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        {editAvatarUrl && (
+                          <img
+                            src={editAvatarUrl}
+                            alt="Avatar preview"
+                            className="w-10 h-10 rounded-xl object-cover border-2 border-violet-500/40 shrink-0 shadow-sm"
+                          />
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          aria-label="Upload profile picture"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 2 * 1024 * 1024) {
+                                showToast('Image file too large. Please select an image under 2MB.');
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                setEditAvatarUrl(reader.result as string);
+                                showToast('Profile picture loaded from file!');
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="w-full p-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-violet-100 file:text-violet-700 dark:file:bg-violet-950/40 dark:file:text-violet-300 hover:file:bg-violet-200 cursor-pointer"
+                        />
+                      </div>
                       <input
                         type="text"
-                        value={editAvatarUrl}
+                        value={editAvatarUrl.startsWith('data:') ? '' : editAvatarUrl}
                         onChange={(e) => setEditAvatarUrl(e.target.value)}
-                        className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
-                        placeholder="Avatar image URL"
+                        className="w-full p-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium text-[11px]"
+                        placeholder={editAvatarUrl.startsWith('data:') ? 'Image uploaded from file (or enter image URL)' : 'Or enter image URL here'}
                       />
                     </div>
                     <div className="sm:col-span-2 space-y-1">
@@ -1842,15 +2816,37 @@ export default function App() {
               )}
             </div>
 
+            {/* Admin Management Tools Portal for Administrator */}
+            {(isAdminAuthorized || userProfile.role === 'admin') && (
+              <div className="p-5 rounded-2xl border border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="space-y-1 text-center sm:text-left">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center justify-center sm:justify-start space-x-2">
+                    <Shield className="w-4 h-4 text-amber-500" />
+                    <span>Administrator Management Tools</span>
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    You are signed in with administrator privileges. You have access to tools for adding novels, editing chapters, deleting content, and moderating reader comments.
+                  </p>
+                </div>
+                <button
+                  onClick={() => navigateToAdmin('dashboard')}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-colors flex items-center space-x-2 shrink-0 cursor-pointer shadow-md shadow-amber-600/20"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Open Admin Tools</span>
+                </button>
+              </div>
+            )}
+
             {/* Profile Statistics Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1 text-center sm:text-left">
                 <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Saved Bookmarks</span>
-                <p className="text-2xl font-black text-violet-600 dark:text-violet-400">{bookmarks.length}</p>
+                <p className="text-2xl font-black text-violet-600 dark:text-violet-400">{visibleBookmarks.length}</p>
               </div>
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1 text-center sm:text-left">
                 <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Chapters Read</span>
-                <p className="text-2xl font-black text-slate-900 dark:text-white">{history.length}</p>
+                <p className="text-2xl font-black text-slate-900 dark:text-white">{visibleHistory.length}</p>
               </div>
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1 text-center sm:text-left">
                 <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Reading Streak</span>
@@ -1859,7 +2855,7 @@ export default function App() {
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1 text-center sm:text-left">
                 <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold">Account Tier</span>
                 <p className="text-sm font-black text-emerald-600 dark:text-emerald-400">
-                  {isCreatorAuthenticated ? 'Creator' : 'Verified Reader'}
+                  {userProfile.role === 'admin' ? 'Administrator' : 'Verified Reader'}
                 </p>
               </div>
             </div>
@@ -2017,477 +3013,27 @@ export default function App() {
             )}
 
             {/* Tab 4: Preferences & Creator Portal */}
+            {/* Tab 4: Preferences & Settings */}
             {profileActiveTab === 'preferences' && (
               <div className="space-y-6">
-                <div className="p-6 rounded-3xl border border-amber-500/30 bg-white dark:bg-[#16181d] space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center space-x-2">
-                        <Shield className="w-4 h-4 text-amber-500" />
-                        <span>Creator & Administrator Portal</span>
-                      </h3>
-                      <p className="text-xs text-slate-600 dark:text-slate-400">
-                        Restricted zone for the site creator (Clyde) to manage translated web novel publications.
-                      </p>
-                    </div>
-                    {isCreatorAuthenticated && (
-                      <span className="px-3 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold rounded-full">
-                        Authenticated
-                      </span>
-                    )}
+                <div className="p-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-4">
+                  <h3 className="font-bold text-base text-slate-900 dark:text-white">Account Settings</h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Manage your profile and reading session settings.
+                  </p>
+                  <div className="pt-2">
+                    <button
+                      onClick={handleUserLogout}
+                      className="px-4 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/40 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Log Out</span>
+                    </button>
                   </div>
-
-                  {isCreatorAuthenticated ? (
-                    <div className="flex flex-wrap items-center gap-3 pt-2">
-                      <button
-                        onClick={() => navigateTo('admin')}
-                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center space-x-1.5"
-                      >
-                        <Shield className="w-4 h-4" />
-                        <span>Open Admin Dashboard</span>
-                      </button>
-                      <button
-                        onClick={handleCreatorLogout}
-                        className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500 text-rose-600 hover:text-white border border-rose-500/30 font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center space-x-1.5"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        <span>Lock Creator Session</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3 pt-2">
-                      <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-                        Are you the creator of AshTL? Unlock your admin dashboard with your creator passcode or Supabase login.
-                      </p>
-                      <button
-                        onClick={() => navigateTo('admin')}
-                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center space-x-1.5 shadow"
-                      >
-                        <Key className="w-4 h-4" />
-                        <span>Enter Creator Passcode / Login</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
           </div>
-        )}
-
-        {/* ADMIN DASHBOARD VIEW */}
-        {currentPage === 'admin' && (
-          !isCreatorAuthenticated ? (
-            <div className="max-w-md mx-auto px-4 py-16 space-y-6 text-left">
-              {/* Back to Home Button */}
-              <div>
-                <button
-                  onClick={() => navigateTo('home')}
-                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 hover:text-violet-600 dark:text-slate-300 dark:hover:text-violet-400 transition-colors p-2 rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/60 cursor-pointer"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  <span>Back to Home</span>
-                </button>
-              </div>
-
-              <div className="p-8 rounded-3xl border border-amber-500/30 bg-white dark:bg-[#16181d] shadow-2xl space-y-6 text-center">
-                <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center border border-amber-500/20">
-                  <Lock className="w-8 h-8" />
-                </div>
-                <div className="space-y-2">
-                  <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white">Creator Verification</h1>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
-                    The Admin Dashboard is strictly restricted to the site creator. Only the verified creator account or authorized passcode can manage novel publications and database settings.
-                  </p>
-                </div>
-
-                {isSupabaseConfigured && (
-                  <form onSubmit={handleSupabaseCreatorLogin} className="space-y-3 text-left border-b border-slate-200 dark:border-slate-800 pb-5">
-                    <span className="text-[11px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wider flex items-center space-x-1">
-                      <Cloud className="w-3.5 h-3.5" />
-                      <span>Supabase Creator Login</span>
-                    </span>
-                    <input
-                      type="email"
-                      value={creatorEmailInput}
-                      onChange={(e) => setCreatorEmailInput(e.target.value)}
-                      placeholder="Creator Email (e.g. ashtranslation123@gmail.com)"
-                      className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs"
-                    />
-                    <input
-                      type="password"
-                      value={creatorPasswordInput}
-                      onChange={(e) => setCreatorPasswordInput(e.target.value)}
-                      placeholder="Password"
-                      className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs"
-                    />
-                    <button
-                      type="submit"
-                      disabled={authLoading}
-                      className="w-full py-2.5 px-4 bg-violet-600 hover:bg-violet-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      {authLoading ? 'Verifying...' : 'Sign In as Creator'}
-                    </button>
-                  </form>
-                )}
-
-                <form onSubmit={handleCreatorPasscodeLogin} className="space-y-4 text-left">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-800 dark:text-slate-300">
-                      {isSupabaseConfigured ? 'Or Direct Creator Passcode' : 'Enter Creator Passcode'}
-                    </label>
-                    <input
-                      type="password"
-                      value={passcodeInput}
-                      onChange={(e) => {
-                        setPasscodeInput(e.target.value);
-                        setPasscodeError('');
-                      }}
-                      placeholder="Enter secret creator passcode..."
-                      className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-mono"
-                    />
-                    {passcodeError && (
-                      <p className="text-[11px] text-rose-500 font-semibold">{passcodeError}</p>
-                    )}
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer shadow-md"
-                  >
-                    <Key className="w-4 h-4" />
-                    <span>Unlock Admin Dashboard</span>
-                  </button>
-                  <p className="text-[10px] text-center text-slate-500 dark:text-slate-400">
-                    Default developer passcode: <span className="font-mono text-amber-500">creator123</span>
-                  </p>
-                </form>
-              </div>
-            </div>
-          ) : (
-            <div className="max-w-6xl mx-auto px-4 py-8 space-y-8 text-left">
-              {/* Back to Home Button */}
-              <div>
-                <button
-                  onClick={() => navigateTo('home')}
-                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 hover:text-violet-600 dark:text-slate-300 dark:hover:text-violet-400 transition-colors p-2 rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/60 cursor-pointer"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  <span>Back to Home</span>
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-                <div>
-                  <h1 className="text-2xl font-extrabold flex items-center space-x-2 text-slate-900 dark:text-white">
-                    <Shield className="w-6 h-6 text-amber-500" />
-                    <span>AshTL Admin Dashboard</span>
-                  </h1>
-                  <p className="text-xs text-slate-700 dark:text-slate-400 font-medium">Content translation management and publication controls</p>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <span className="px-3 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold rounded-full flex items-center space-x-1">
-                    <Unlock className="w-3.5 h-3.5" />
-                    <span>Creator Session Active</span>
-                  </span>
-                  <button
-                    onClick={handleCreatorLogout}
-                    className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-600 hover:text-white dark:text-rose-400 border border-rose-500/30 text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center space-x-1"
-                    title="Lock creator session"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Lock Session</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Metrics Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1">
-                  <span className="text-xs text-slate-800 dark:text-slate-300 font-bold">Total Novels</span>
-                  <p className="text-2xl font-black text-slate-900 dark:text-white">{novels.length}</p>
-                </div>
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1">
-                  <span className="text-xs text-slate-800 dark:text-slate-300 font-bold">Total Chapters</span>
-                  <p className="text-2xl font-black text-violet-700 dark:text-violet-400">
-                    {novels.reduce((acc, n) => acc + n.chapters.length, 0)}
-                  </p>
-                </div>
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1">
-                  <span className="text-xs text-slate-800 dark:text-slate-300 font-bold">Bookmarked Count</span>
-                  <p className="text-2xl font-black text-amber-600 dark:text-amber-500">{bookmarks.length}</p>
-                </div>
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-1">
-                  <span className="text-xs text-slate-800 dark:text-slate-300 font-bold">Database Mode</span>
-                  <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
-                    {isSupabaseConfigured ? 'Supabase Cloud' : 'Local Storage'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Admin Tabs */}
-              <div className="flex space-x-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-                <button
-                  onClick={() => setAdminActiveTab('create-novel')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 ${
-                    adminActiveTab === 'create-novel'
-                      ? 'bg-violet-600 text-white shadow-md'
-                      : 'bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
-                  }`}
-                >
-                  <BookPlus className="w-4 h-4" />
-                  <span>1. Create New Translated Novel</span>
-                </button>
-                <button
-                  onClick={() => setAdminActiveTab('add-chapter')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 ${
-                    adminActiveTab === 'add-chapter'
-                      ? 'bg-violet-600 text-white shadow-md'
-                      : 'bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
-                  }`}
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>2. Upload Chapter to Novel</span>
-                </button>
-                <button
-                  onClick={() => setAdminActiveTab('creator-settings')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 ${
-                    adminActiveTab === 'creator-settings'
-                      ? 'bg-violet-600 text-white shadow-md'
-                      : 'bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
-                  }`}
-                >
-                  <Key className="w-4 h-4" />
-                  <span>3. Creator Security Settings</span>
-                </button>
-              </div>
-
-              {/* Tab 1: Create Novel Form */}
-              {adminActiveTab === 'create-novel' && (
-                <div className="p-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-4">
-                  <h3 className="font-bold text-base flex items-center space-x-2 text-slate-900 dark:text-white">
-                    <BookPlus className="w-4 h-4 text-violet-500" />
-                    <span>Create New Translated Web Novel</span>
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                    <input
-                      type="text"
-                      value={newNovelTitle}
-                      onChange={(e) => setNewNovelTitle(e.target.value)}
-                      placeholder="Novel Title (e.g. Return of the Mount Hua Sect)"
-                      className="p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 font-medium"
-                    />
-                    <input
-                      type="text"
-                      value={newNovelAuthor}
-                      onChange={(e) => setNewNovelAuthor(e.target.value)}
-                      placeholder="Author (e.g. Biga)"
-                      className="p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 font-medium"
-                    />
-                    <input
-                      type="text"
-                      value={newNovelTranslator}
-                      onChange={(e) => setNewNovelTranslator(e.target.value)}
-                      placeholder="Translator / Group Name (e.g. ClydeTL)"
-                      className="p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 font-medium"
-                    />
-                    <select
-                      value={newNovelStatus}
-                      onChange={(e) => setNewNovelStatus(e.target.value as any)}
-                      className="p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold cursor-pointer"
-                    >
-                      <option value="Ongoing">Ongoing</option>
-                      <option value="Completed">Completed</option>
-                      <option value="Hiatus">Hiatus</option>
-                    </select>
-                    <div className="space-y-2">
-                      <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300">Cover Image</label>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              setNewNovelCoverData(reader.result as string);
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                        className="w-full p-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-violet-100 file:text-violet-700 dark:file:bg-violet-950/40 dark:file:text-violet-300 hover:file:bg-violet-200 cursor-pointer"
-                      />
-                      {newNovelCoverData && (
-                        <img src={newNovelCoverData} alt="Cover preview" className="w-20 h-28 object-cover rounded-lg border border-slate-300 dark:border-slate-700" />
-                      )}
-                    </div>
-                    <input
-                      type="text"
-                      value={newNovelGenres}
-                      onChange={(e) => setNewNovelGenres(e.target.value)}
-                      placeholder="Genres comma-separated (e.g. Fantasy, Martial Arts, Action)"
-                      className="p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-600 dark:placeholder:text-slate-400 font-medium"
-                    />
-                    <input
-                      type="text"
-                      value={newNovelAltTitles}
-                      onChange={(e) => setNewNovelAltTitles(e.target.value)}
-                      placeholder="Alternative Titles comma-separated (e.g. 화산귀환, Return of Mount Hua)"
-                      className="md:col-span-2 p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-600 dark:placeholder:text-slate-400 font-medium"
-                    />
-                    <textarea
-                      rows={3}
-                      value={newNovelSynopsis}
-                      onChange={(e) => setNewNovelSynopsis(e.target.value)}
-                      placeholder="Synopsis / Summary description..."
-                      className="md:col-span-2 p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-600 dark:placeholder:text-slate-400 font-medium"
-                    />
-                  </div>
-                  <button
-                    onClick={handleCreateNovel}
-                    className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    Create Novel
-                  </button>
-                </div>
-              )}
-
-              {/* Tab 2: Upload Chapter Form */}
-              {adminActiveTab === 'add-chapter' && (
-                <div className="p-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-4">
-                  <h3 className="font-bold text-base flex items-center space-x-2 text-slate-900 dark:text-white">
-                    <Plus className="w-4 h-4 text-violet-500" />
-                    <span>Upload Translated Chapter</span>
-                  </h3>
-                  {novels.length === 0 ? (
-                    <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold">
-                      No novels exist yet! Please switch to tab "1. Create New Translated Novel" first.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                      <input
-                        type="text"
-                        value={adminChapterTitle}
-                        onChange={(e) => setAdminChapterTitle(e.target.value)}
-                        placeholder="Chapter Title (e.g. Chapter 1: The Beginning of the Journey)"
-                        className="p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-600 dark:placeholder:text-slate-400 font-medium"
-                      />
-                      <select 
-                        aria-label="Select novel to publish chapter to" 
-                        value={adminNovelId}
-                        onChange={(e) => setAdminNovelId(e.target.value)}
-                        className="p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold cursor-pointer"
-                      >
-                        {novels.map(n => <option key={n.id} value={n.id}>{n.title} ({n.chapters.length} chaps)</option>)}
-                      </select>
-                      <textarea
-                        rows={5}
-                        value={adminChapterContent}
-                        onChange={(e) => setAdminChapterContent(e.target.value)}
-                        placeholder="Paste English translated chapter text here (paragraphs separated by blank lines)..."
-                        className="md:col-span-2 p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-xs text-slate-900 dark:text-white placeholder:text-slate-600 dark:placeholder:text-slate-400"
-                      />
-                    </div>
-                  )}
-                  <button
-                    disabled={novels.length === 0}
-                    onClick={handlePublishChapter}
-                    className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    Publish Chapter
-                  </button>
-                </div>
-              )}
-
-              {/* Tab 3: Creator Security Settings */}
-              {adminActiveTab === 'creator-settings' && (
-                <div className="p-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-6">
-                  <div className="space-y-1">
-                    <h3 className="font-bold text-base flex items-center space-x-2 text-slate-900 dark:text-white">
-                      <Key className="w-4 h-4 text-amber-500" />
-                      <span>Creator Security & Database Credentials</span>
-                    </h3>
-                    <p className="text-xs text-slate-600 dark:text-slate-400">
-                      Manage your secret creator passcode and inspect database cloud synchronization.
-                    </p>
-                  </div>
-
-                  <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 space-y-3">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">Cloud Database Status (Supabase)</h4>
-                    <div className="flex items-center space-x-2 text-xs">
-                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                      <span className="font-semibold text-slate-900 dark:text-white">
-                        {isSupabaseConfigured ? 'Connected to Supabase PostgreSQL' : 'Local Storage Mode (Offline / Dev)'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                      Authorized Creator Email: <span className="font-mono font-bold text-violet-700 dark:text-violet-400">{CREATOR_EMAIL}</span>.
-                      {isSupabaseConfigured 
-                        ? ' All published novels and uploaded chapters are synced globally.' 
-                        : ' To connect your Supabase project, create a project on supabase.com, execute the schema from supabase/schema.sql, and copy your credentials into .env.'}
-                    </p>
-                  </div>
-
-                  <div className="space-y-3 max-w-md">
-                    <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300">Update Creator Passcode</label>
-                    <div className="flex space-x-2">
-                      <input
-                        type="password"
-                        value={newPasscodeSetting}
-                        onChange={(e) => setNewPasscodeSetting(e.target.value)}
-                        placeholder="Enter new 4+ character passcode..."
-                        className="flex-1 p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-mono"
-                      />
-                      <button
-                        onClick={handleUpdateCreatorPasscode}
-                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                      >
-                        Update
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Current Novels Directory in Admin */}
-              {novels.length > 0 && (
-                <div className="p-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#16181d] space-y-4">
-                  <h3 className="font-bold text-base text-slate-900 dark:text-white">Active Translated Novels ({novels.length})</h3>
-                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {novels.map(novel => (
-                      <div key={novel.id} className="py-3 flex items-center justify-between">
-                        <div>
-                          <h4 className="font-bold text-sm text-slate-900 dark:text-white">{novel.title}</h4>
-                          <p className="text-xs text-slate-700 dark:text-slate-400 font-medium">
-                            {novel.chapters.length} chapters • Translator: {novel.translator}
-                          </p>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <button
-                            onClick={() => openNovelDetail(novel.slug)}
-                            className="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
-                          >
-                            View
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (window.confirm(`Delete "${novel.title}"?`)) {
-                                setNovels(novels.filter(n => n.id !== novel.id));
-                                showToast(`Deleted "${novel.title}"`);
-                              }
-                            }}
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer"
-                            title="Delete Novel"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )
         )}
 
         {/* LEGAL & INFORMATION PAGES */}
@@ -2586,10 +3132,13 @@ export default function App() {
 
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between text-[11px] text-slate-700 dark:text-slate-400 font-medium">
             <p>© 2026 AshTL. All rights reserved.</p>
-            <p className="mt-2 sm:mt-0">Built for speed, mobile readability & clean translations.</p>
+            <div className="mt-2 sm:mt-0 flex items-center space-x-3">
+              <span>Built for speed, mobile readability & clean translations.</span>
+            </div>
           </div>
         </footer>
       )}
+
     </div>
   );
 }

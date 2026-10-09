@@ -6,6 +6,7 @@ export interface Chapter {
   originalContent?: string;
   releaseDate: string;
   wordCount: number;
+  isPublished?: boolean;
 }
 
 export interface Novel {
@@ -26,6 +27,36 @@ export interface Novel {
   latestChapter: number;
   chapters: Chapter[];
   translatorNotes?: string;
+  isPublished?: boolean;
+}
+
+export interface Comment {
+  id: string;
+  novelId: string;
+  chapterId?: string;
+  chapterTitle?: string;
+  novelTitle?: string;
+  userId?: string;
+  userName: string;
+  userAvatar?: string;
+  content: string;
+  status: 'approved' | 'pending' | 'flagged';
+  createdAt: string;
+}
+
+export interface AdminStats {
+  totalNovels: number;
+  publishedNovels: number;
+  draftNovels: number;
+  totalChapters: number;
+  totalComments: number;
+  recentChapters: {
+    id: string;
+    novelTitle: string;
+    chapterNumber: number;
+    title: string;
+    releaseDate: string;
+  }[];
 }
 
 export interface ReadingSettings {
@@ -51,9 +82,13 @@ export interface HistoryItem extends BookmarkItem {
 }
 
 export interface UserProfile {
+  id?: string;
+  email?: string;
   username: string;
   bio: string;
   avatarUrl: string;
   joinDate: string;
   readingStreak: number;
+  role?: 'user' | 'admin';
+  createdAt?: string;
 }
