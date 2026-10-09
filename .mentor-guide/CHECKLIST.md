@@ -16,3 +16,30 @@
   - [x] DMCA copyright policy agent email update (`ashtranslation123@gmail.com`)
   - [x] Direct file upload for novel cover images
   - [x] English-only translation architecture (removal of language filters & raw chapter toggles)
+- [x] `02-feature/google-auth-two-tier`: Two-Tier Google Authentication & Supabase RLS System
+  - [x] Unified Google OAuth flow supporting all visitors and dedicated administrator
+  - [x] Environment variable configuration (`VITE_ADMIN_EMAIL` / `ADMIN_EMAIL`)
+  - [x] Supabase auth module updates (`signInWithGoogle`, `signOutUser`, `verifyAdminAuthorization`, `fetchUserProfile`)
+  - [x] Database schema & auto-promotion trigger for admin role with PostgreSQL RLS enforcement
+  - [x] Public Google Sign-In UI in header, mobile drawer, and profile view
+  - [x] Protected `/admin` routes with `AdminAccessDenied` 403 screen for unauthorized accounts
+  - [x] SPA OAuth callback route handler (`/auth/callback`)
+  - [x] Automated test suite coverage for auth flows and route protection
+- [x] `03-feature/isolated-bookmarks-admin-access`: Account-Scoped Bookmarks & Admin Management
+  - [x] Account-isolated local and remote bookmark & history storage
+  - [x] Individual item deletion on bookmarks and reading history cards
+  - [x] Automatic orphan pruning for removed novels
+  - [x] Surface Admin Tools buttons in header and profile portal for verified admins
+- [x] `04-feature/views-bookmarks-popularity`: Engagement Metrics & Popularity-Based Spotlight
+  - [x] Removed star ratings across all user-facing pages and admin views
+  - [x] Real-time reader view counting and bookmark counters
+  - [x] View-based Spotlight Novel selection (highest viewed published novel)
+  - [x] Dedicated "Most Popular" ranked section on Homepage
+  - [x] Catalog sorting by "Most Popular (Views)" and "Most Bookmarked"
+  - [x] PostgreSQL SECURITY DEFINER RPC functions and bookmarks trigger
+  - [x] Metrics persistence across account switches
+- [x] `05-feature/production-deployment-readiness`: SPA Routing & Production Build Optimization
+  - [x] Vercel SPA rewrite rule (`vercel.json`)
+  - [x] Netlify / Cloudflare Pages rewrite rule (`public/_redirects`)
+  - [x] Rollup manual vendor chunking in `vite.config.ts`
+  - [x] Automated test suite passing 20/20 Vitest tests
