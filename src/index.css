@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+/* Configure Tailwind v4 to toggle dark mode using the .dark class */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Lora', Georgia, Cambria, 'Times New Roman', Times, serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --color-ash-50: #f8fafc;
+  --color-ash-100: #f1f5f9;
+  --color-ash-200: #e2e8f0;
+  --color-ash-300: #cbd5e1;
+  --color-ash-400: #64748b;
+  --color-ash-500: #475569;
+  --color-ash-600: #334155;
+  --color-ash-700: #1e293b;
+  --color-ash-800: #16181d;
+  --color-ash-900: #101216;
+  --color-ash-950: #0a0b0d;
+}
+
+/* Light mode text contrast enhancements */
+:root {
+  color-scheme: light dark;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Reader custom theme variables */
+.reader-theme-light {
+  background-color: #fbfbf9;
+  color: #1a1a1e;
+}
+
+.reader-theme-sepia {
+  background-color: #f6f0e2;
+  color: #2e261a;
+}
+
+.reader-theme-dark {
+  background-color: #121316;
+  color: #e2e8f0;
+}
+
+.reader-theme-pitch-black {
+  background-color: #000000;
+  color: #d1d5db;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.15s ease-out forwards;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
