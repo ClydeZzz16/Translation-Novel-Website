@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus,
   Edit3,
@@ -8,9 +8,14 @@ import {
   EyeOff,
   X,
   Layers,
-  BookOpen
+  BookOpen,
+  Sparkles,
+  AlignCenter,
+  Bold,
+  Italic
 } from 'lucide-react';
 import { Novel, Chapter } from '../../types/novel';
+import { ChapterContentRenderer } from '../ChapterContentRenderer';
 
 interface AdminChaptersProps {
   novels: Novel[];
@@ -41,6 +46,8 @@ export const AdminChapters: React.FC<AdminChaptersProps> = ({
   const [chapterNumber, setChapterNumber] = useState<number>(1);
   const [chapterTitle, setChapterTitle] = useState('');
   const [chapterContent, setChapterContent] = useState('');
+  const [editorTab, setEditorTab] = useState<'write' | 'preview'>('write');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Sync selected novel if novels array changes and selectedNovelId is empty
   useEffect(() => {
@@ -63,6 +70,29 @@ export const AdminChapters: React.FC<AdminChaptersProps> = ({
     setChapterTitle(`Chapter ${nextNum}`);
     setChapterContent('');
     setEditingChapterId(null);
+    setEditorTab('write');
+  };
+
+  const handleInsertFormatting = (prefix: string, suffix: string, defaultPlaceholder: string = '') => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setChapterContent((prev) => `${prev}\n\n${prefix}${defaultPlaceholder}${suffix}`);
+      return;
+    }
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = chapterContent.substring(start, end);
+    const replacement = selectedText ? `${prefix}${selectedText}${suffix}` : `${prefix}${defaultPlaceholder}${suffix}`;
+
+    const nextContent = chapterContent.substring(0, start) + replacement + chapterContent.substring(end);
+    setChapterContent(nextContent);
+
+    setTimeout(() => {
+      textarea.focus();
+      const newCursorPos = selectedText ? start + replacement.length : start + prefix.length + defaultPlaceholder.length;
+      textarea.setSelectionRange(newCursorPos, newCursorPos);
+    }, 0);
   };
 
   const handleOpenAdd = () => {
@@ -305,22 +335,120 @@ export const AdminChapters: React.FC<AdminChaptersProps> = ({
                 </div>
               </div>
 
-              {/* Translation Content Area with Comfortable Reading/Writing Typography */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-slate-400">
-                  <label className="font-semibold text-slate-300">Translated Chapter Content (English)</label>
+              {/* Translation Content Area with Comfortable Reading/Writing Typography & Live Preview */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-slate-400">
+                  <div className="flex items-center space-x-3">
+                    <label className="font-semibold text-slate-300">Translated Chapter Content</label>
+                    <div className="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setEditorTab('write')}
+                        className={`px-3 py-1 rounded-md font-bold transition-colors cursor-pointer ${
+                          editorTab === 'write' ? 'bg-violet-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Write
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditorTab('preview')}
+                        className={`px-3 py-1 rounded-md font-bold transition-colors cursor-pointer ${
+                          editorTab === 'preview' ? 'bg-violet-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Live Preview
+                      </button>
+                    </div>
+                  </div>
                   <span className="font-mono text-[11px] text-violet-400">
                     {wordCount} words
                   </span>
                 </div>
-                <textarea
-                  rows={16}
-                  required
-                  value={chapterContent}
-                  onChange={(e) => setChapterContent(e.target.value)}
-                  placeholder="Paste or write English translated text here... Paragraphs separated by blank lines will be rendered cleanly in the reader."
-                  className="w-full p-4 rounded-2xl border border-slate-700 bg-slate-950 font-serif text-sm leading-relaxed text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y"
-                />
+
+                {editorTab === 'write' ? (
+                  <div className="space-y-2">
+                    {/* Formatting Toolbar */}
+                    <div className="flex flex-wrap items-center gap-1.5 p-2 bg-slate-950/80 border border-slate-800 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => handleInsertFormatting('[system]【', '】[/system]', 'You have died')}
+                        className="px-2.5 py-1 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-700/60 text-red-200 font-bold flex items-center space-x-1.5 transition-colors cursor-pointer text-[11px] shadow-sm shadow-red-900/30"
+                        title="Insert glowing red system notification like in LitRPGs"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-red-400" />
+                        <span>Red System Glow</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleInsertFormatting('【', '】', 'System Message')}
+                        className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium transition-colors cursor-pointer text-[11px]"
+                        title="Wrap text with Japanese lenticular brackets 【 】"
+                      >
+                        <span>【 】 Brackets</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleInsertFormatting('[center]', '[/center]', 'Centered text')}
+                        className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium flex items-center space-x-1 transition-colors cursor-pointer text-[11px]"
+                        title="Center text block"
+                      >
+                        <AlignCenter className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Center</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleInsertFormatting('**', '**', 'bold text')}
+                        className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium transition-colors cursor-pointer text-[11px]"
+                        title="Bold"
+                      >
+                        <Bold className="w-3.5 h-3.5 text-slate-300" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleInsertFormatting('*', '*', 'italic text')}
+                        className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium transition-colors cursor-pointer text-[11px]"
+                        title="Italic"
+                      >
+                        <Italic className="w-3.5 h-3.5 text-slate-300" />
+                      </button>
+
+                      <span className="text-[10px] text-slate-400 hidden lg:inline ml-auto">
+                        💡 Use <strong>[system]【Text】[/system]</strong> for glowing red system prompts.
+                      </span>
+                    </div>
+
+                    <textarea
+                      ref={textareaRef}
+                      rows={16}
+                      required
+                      value={chapterContent}
+                      onChange={(e) => setChapterContent(e.target.value)}
+                      placeholder="Paste or write English translated text here... Use the 'Red System Glow' button or [system]【You have died】[/system] to create glowing death/system prompts."
+                      className="w-full p-4 rounded-2xl border border-slate-700 bg-slate-950 font-serif text-sm leading-relaxed text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y"
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-slate-800 bg-[#121316] p-6 min-h-[380px] max-h-[500px] overflow-y-auto">
+                    <div className="text-center mb-6 pb-4 border-b border-slate-800/80">
+                      <span className="text-[10px] uppercase tracking-widest text-violet-400 font-mono font-bold block mb-1">
+                        Reader Live Preview
+                      </span>
+                      <h3 className="text-lg font-bold text-white font-serif">{chapterTitle || 'Untitled Chapter'}</h3>
+                    </div>
+                    {chapterContent.trim() ? (
+                      <ChapterContentRenderer content={chapterContent} theme="dark" />
+                    ) : (
+                      <p className="text-slate-500 italic text-center py-16">
+                        No content written yet. Switch back to "Write" tab to author chapter paragraphs.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
