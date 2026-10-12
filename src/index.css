@@ -94,3 +94,37 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(100, 116, 139, 0.5);
 }
+
+/* Chapter Reader: Glowing System Prompt / Ominous Notification */
+.novel-system-glow {
+  color: #ffffff !important;
+  font-family: var(--font-serif), Georgia, Cambria, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  text-shadow:
+    0 0 4px #ff3333,
+    0 0 10px rgba(255, 45, 45, 0.95),
+    0 0 20px rgba(239, 68, 68, 0.8),
+    0 0 35px rgba(220, 38, 38, 0.65),
+    0 0 50px rgba(185, 28, 28, 0.45);
+}
+
+.novel-system-glow-block {
+  text-align: center;
+  margin-top: 1.75rem;
+  margin-bottom: 1.75rem;
+  padding: 0.5rem 0;
+  display: block;
+}
+
+/* Light / Sepia reader theme atmospheric backdrop for crisp white/red glow visibility */
+.reader-theme-light .novel-system-glow-block,
+.reader-theme-sepia .novel-system-glow-block {
+  background-color: #0b0c10;
+  border-radius: 1rem;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 0 15px rgba(220, 38, 38, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
