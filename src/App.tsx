@@ -24,6 +24,7 @@ import { AdminComments } from './components/admin/AdminComments';
 import { AdminSettings } from './components/admin/AdminSettings';
 import { AdminLogin } from './components/admin/AdminLogin';
 import { AdminAccessDenied } from './components/admin/AdminAccessDenied';
+import { ChapterContentRenderer } from './components/ChapterContentRenderer';
 
 export { AdSlot };
 
@@ -2348,25 +2349,21 @@ export default function App() {
               </div>
 
               {/* Text Paragraph Rendering */}
-              <div className={`space-y-6 ${
-                readerSettings.fontFamily === 'serif' ? 'font-serif' :
-                readerSettings.fontFamily === 'mono' ? 'font-mono' : 'font-sans'
-              } ${
-                readerSettings.fontSize === 'sm' ? 'text-sm' :
-                readerSettings.fontSize === 'lg' ? 'text-lg' :
-                readerSettings.fontSize === 'xl' ? 'text-xl' : 'text-base'
-              } ${
-                readerSettings.lineHeight === 'compact' ? 'leading-normal' :
-                readerSettings.lineHeight === 'comfortable' ? 'leading-loose' : 'leading-relaxed'
-              }`}>
-                {currentChapter.content.split('\n\n').map((paragraph, idx) => {
-                  return (
-                    <div key={idx} className="space-y-2">
-                      <p className="whitespace-pre-line">{paragraph}</p>
-                    </div>
-                  );
-                })}
-              </div>
+              <ChapterContentRenderer
+                content={currentChapter.content}
+                theme={readerSettings.theme}
+                className={`${
+                  readerSettings.fontFamily === 'serif' ? 'font-serif' :
+                  readerSettings.fontFamily === 'mono' ? 'font-mono' : 'font-sans'
+                } ${
+                  readerSettings.fontSize === 'sm' ? 'text-sm' :
+                  readerSettings.fontSize === 'lg' ? 'text-lg' :
+                  readerSettings.fontSize === 'xl' ? 'text-xl' : 'text-base'
+                } ${
+                  readerSettings.lineHeight === 'compact' ? 'leading-normal' :
+                  readerSettings.lineHeight === 'comfortable' ? 'leading-loose' : 'leading-relaxed'
+                }`}
+              />
 
               {/* Bottom In-Content Ad */}
               <AdSlot slotLocation="chapter-bottom" />
