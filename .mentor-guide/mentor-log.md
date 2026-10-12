@@ -43,7 +43,7 @@
 - **Decision**: Surface direct Admin Tools navigation buttons in Desktop Header, Mobile Drawer, and User Profile view when `isAdminAuthorized` is true, enabling the administrator to easily access dashboard management.
 - **Decision**: Proactively synchronize admin database elevation via `supabase.rpc('sync_admin_status')` in `verifyAdminAuthorization`, and seed `set_admin_email('ashtranslation123@gmail.com')` in `supabase/schema.sql` to ensure PostgreSQL Row-Level Security (RLS) permits novel and chapter management.
 
-## [2026-10-09] - Phase 5: View & Bookmark Metrics, View-Based Spotlight & Most Popular Ranking
+- [2026-10-09] - Phase 5: View & Bookmark Metrics, View-Based Spotlight & Most Popular Ranking
 - **Decision**: Deprecate and remove star rating indicators across all user-facing interfaces (Spotlight Hero banner, Recently Updated cards, Catalog cards, Novel Detail view, and Admin management tables).
 - **Decision**: Introduce visible engagement metrics: view counter (`views`) and bookmark counter (`bookmarksCount`) across novel cards, spotlight banners, detail headers, and admin management tables.
 - **Decision**: Re-architect Featured Spotlight Novel on the Homepage to automatically select the published novel with the highest view count (`[...published].sort((a, b) => b.views - a.views)[0]`).
@@ -53,5 +53,13 @@
 - **Decision**: Wire bookmark toggles to atomically increment or decrement novel `bookmarksCount` locally and synchronize updates to Supabase `novels.bookmarks_count`.
 - **Decision**: Add automated Vitest unit tests verifying view-based Spotlight selection, Most Popular ranking, and dynamic bookmark count adjustments.
 - **Decision**: Prevent view and bookmark counts from resetting to zero on account switch by using `Math.max()` merge with local cached metrics when `fetchSupabaseData` runs, adding SECURITY DEFINER RPC functions `increment_novel_view` and `sync_novel_bookmark_count`, and attaching trigger `trg_sync_novel_bookmarks_count` to synchronize database-level bookmark counts.
+
+## [2026-10-12] - Phase 6: Chapter Text Styling & LitRPG Glowing System Prompts
+- **Decision**: Introduce `.novel-system-glow` multi-layered crimson glow CSS styling to recreate ominous LitRPG system notifications, death alerts, and celestial voices (e.g., `【You have died】`).
+- **Decision**: Implement `ChapterContentRenderer` to parse chapter content for explicit tags (`[system]`, `[glow]`, `[center]`, `**bold**`, `*italic*`) as well as auto-detecting paragraphs enclosed in lenticular brackets (`【...】`).
+- **Decision**: Enhance `AdminChapters.tsx` with a selection-aware authoring toolbar providing one-click insertion of "Red System Glow", "【 】 Brackets", "Center", "Bold", and "Italic".
+- **Decision**: Add "Write" vs "Live Preview" tabs in the chapter authoring modal so publishers can inspect the illuminated red glow on dark reading background prior to publishing.
+- **Decision**: Maintain backward compatibility across all reader themes (Dark, Pitch Black OLED, Sepia, and Light) with high-contrast atmospheric backdrops where necessary.
+
 
 

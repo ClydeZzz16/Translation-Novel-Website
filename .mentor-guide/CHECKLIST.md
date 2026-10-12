@@ -43,3 +43,12 @@
   - [x] Netlify / Cloudflare Pages rewrite rule (`public/_redirects`)
   - [x] Rollup manual vendor chunking in `vite.config.ts`
   - [x] Automated test suite passing 20/20 Vitest tests
+- [x] `06-feature/chapter-text-styling-system-glow`: Glowing System Prompt Formatting & Admin Authoring Tools
+  - [x] Multi-layered CSS text shadow `.novel-system-glow` with crimson outer aura and font styling
+  - [x] Reusable `ChapterContentRenderer` supporting `[system]`, `[glow]`, `[center]`, `**bold**`, `*italic*`, and lenticular brackets `【...】`
+  - [x] Reader view integration in `App.tsx` replacing plain paragraph splitting
+  - [x] Formatting toolbar in `AdminChapters.tsx` with "Red System Glow", "【 】 Brackets", "Center", "Bold", and "Italic" buttons
+  - [x] "Write" vs "Live Preview" tabs in Chapter Authoring Modal for real-time visual inspection
+  - [x] Automated test suite covering system prompt parsing (26/26 Vitest tests passing)
+  - [x] Browser verification of reader view rendering glowing red death alerts
+
