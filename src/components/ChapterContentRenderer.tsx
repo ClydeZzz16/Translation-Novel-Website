@@ -7,7 +7,7 @@ interface ChapterContentRendererProps {
 }
 
 function renderInlineContent(text: string): React.ReactNode[] {
-  const tokenRegex = /(\[system\][\s\S]*?\[\/system\]|\[glow\][\s\S]*?\[\/glow\]|\*\*[\s\S]*?\*\*|\*[^\s*][\s\S]*?\*|\[b\][\s\S]*?\[\/b\]|\[i\][\s\S]*?\[\/i\])/g;
+  const tokenRegex = /(\[system\][\s\S]*?\[\/system\]|\[glow\][\s\S]*?\[\/glow\]|\[status\][\s\S]*?\[\/status\]|\*\*[\s\S]*?\*\*|\*[^\s*][\s\S]*?\*|\[b\][\s\S]*?\[\/b\]|\[i\][\s\S]*?\[\/i\])/g;
 
   const parts = text.split(tokenRegex);
   return parts.map((part, i) => {
@@ -25,6 +25,14 @@ function renderInlineContent(text: string): React.ReactNode[] {
       const inner = part.slice(6, -7);
       return (
         <span key={i} className="novel-system-glow px-1 inline-block">
+          {inner}
+        </span>
+      );
+    }
+    if (part.startsWith('[status]') && part.endsWith('[/status]')) {
+      const inner = part.slice(8, -9);
+      return (
+        <span key={i} className="novel-status-glow px-1 inline-block">
           {inner}
         </span>
       );
@@ -104,7 +112,21 @@ export const ChapterContentRenderer: React.FC<ChapterContentRendererProps> = ({
           );
         }
 
-        // 2. Lenticular brackets system prompt (starts with 【 and ends with 】)
+        // 2. Explicit [status]...[/status] block (blue game status window)
+        if (trimmed.startsWith('[status]') && trimmed.endsWith('[/status]')) {
+          const rawInner = trimmed.slice(8, -9).trim();
+          const innerText = rawInner.replace(/\[\/status\]\s*\[status\]/gi, '\n');
+
+          return (
+            <div key={idx} className="novel-status-glow-block my-8 select-text">
+              <div className="novel-status-glow text-center text-lg sm:text-xl font-serif tracking-wide whitespace-pre-line leading-relaxed">
+                {innerText}
+              </div>
+            </div>
+          );
+        }
+
+        // 3. Lenticular brackets system prompt (starts with 【 and ends with 】)
         if (trimmed.startsWith('【') && trimmed.endsWith('】')) {
           return (
             <div key={idx} className="novel-system-glow-block my-8 select-text">

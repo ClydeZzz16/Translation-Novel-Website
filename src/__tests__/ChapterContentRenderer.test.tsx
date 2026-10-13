@@ -58,6 +58,29 @@ describe('ChapterContentRenderer: System Prompt & Glowing Notification Parsing',
     expect(screen.getByText('ancient magic').tagName).toBe('EM');
   });
 
+  it('renders explicit [status] tag as blue status window block', () => {
+    const text = `[status]【Name: Nolan】\n【Level: 1】\n【HP: 4/23】[/status]`;
+    const { container } = render(<ChapterContentRenderer content={text} theme="dark" />);
+
+    const glowBlock = container.querySelector('.novel-status-glow-block');
+    expect(glowBlock).toBeInTheDocument();
+
+    const glowText = container.querySelector('.novel-status-glow');
+    expect(glowText).toBeInTheDocument();
+    expect(glowText).toHaveTextContent('【Name: Nolan】');
+    expect(glowText).toHaveTextContent('【HP: 4/23】');
+  });
+
+  it('renders inline [status] tag with blue glow inside paragraphs', () => {
+    const text = `A notification appeared: [status]【HP restored to full】[/status] and the hero stood up.`;
+    const { container } = render(<ChapterContentRenderer content={text} theme="dark" />);
+
+    expect(screen.getByText(/A notification appeared/)).toBeInTheDocument();
+    const inlineStatus = container.querySelector('span.novel-status-glow');
+    expect(inlineStatus).toBeInTheDocument();
+    expect(inlineStatus).toHaveTextContent('【HP restored to full】');
+  });
+
   it('gracefully handles empty, null, or undefined content without crashing', () => {
     render(<ChapterContentRenderer content="" theme="dark" />);
     expect(screen.getByText(/This chapter does not contain any readable text yet/i)).toBeInTheDocument();

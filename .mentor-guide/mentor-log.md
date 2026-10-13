@@ -61,6 +61,8 @@
 - **Decision**: Add "Write" vs "Live Preview" tabs in the chapter authoring modal so publishers can inspect the illuminated red glow on dark reading background prior to publishing.
 - **Decision**: Maintain backward compatibility across all reader themes (Dark, Pitch Black OLED, Sepia, and Light) with high-contrast atmospheric backdrops where necessary.
 - **Decision**: Fortify `ChapterContentRenderer` and `App.tsx` reader view with null-safety and defensive fallbacks to eliminate white screen crashes caused by missing chapter content, empty drafts, or Supabase RLS draft filtering.
+- **Decision**: Introduce resilient `safeSetItem` utility wrapping all `localStorage` operations with automated `QuotaExceededError` suppression and transient cache pruning, preventing browser 5MB storage ceilings from crashing React during reading history tracking.
+- **Decision**: Add `.novel-status-glow` blue glow variant for LitRPG game status window panels (`[status]...[/status]` tag), featuring dark navy gradient panel, blue border glow, and non-italic bold text — architecturally mirroring the red glow system but visually distinct for game UI elements like stat sheets and level-up notifications.
 
 
 

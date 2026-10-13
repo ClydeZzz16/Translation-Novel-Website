@@ -12,7 +12,8 @@ import {
   Sparkles,
   AlignCenter,
   Bold,
-  Italic
+  Italic,
+  Shield
 } from 'lucide-react';
 import { Novel, Chapter } from '../../types/novel';
 import { ChapterContentRenderer } from '../ChapterContentRenderer';
@@ -382,6 +383,16 @@ export const AdminChapters: React.FC<AdminChaptersProps> = ({
 
                       <button
                         type="button"
+                        onClick={() => handleInsertFormatting('[status]', '[/status]', '【Name: Hero】\n【Level: 1】\n【HP: 100/100】')}
+                        className="px-2.5 py-1 rounded-lg bg-blue-950/80 hover:bg-blue-900 border border-blue-700/60 text-blue-200 font-bold flex items-center space-x-1.5 transition-colors cursor-pointer text-[11px] shadow-sm shadow-blue-900/30"
+                        title="Insert blue game status window panel"
+                      >
+                        <Shield className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Blue Status Window</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => handleInsertFormatting('【', '】', 'System Message')}
                         className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium transition-colors cursor-pointer text-[11px]"
                         title="Wrap text with Japanese lenticular brackets 【 】"
@@ -418,7 +429,7 @@ export const AdminChapters: React.FC<AdminChaptersProps> = ({
                       </button>
 
                       <span className="text-[10px] text-slate-400 hidden lg:inline ml-auto">
-                        💡 Use <strong>[system]【Text】[/system]</strong> for glowing red system prompts.
+                        💡 <strong>[system]【Text】[/system]</strong> for red glow · <strong>[status]Text[/status]</strong> for blue status
                       </span>
                     </div>
 
