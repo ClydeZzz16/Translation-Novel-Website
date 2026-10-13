@@ -219,6 +219,20 @@ export default function App() {
   const getBookmarkStorageKey = (uid?: string | null) => (uid ? `ashtl_bookmarks_${uid}` : 'ashtl_bookmarks');
   const getHistoryStorageKey = (uid?: string | null) => (uid ? `ashtl_history_${uid}` : 'ashtl_history');
 
+  const safeSetItem = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn(`[Storage] Failed to write key "${key}" (quota exceeded). Continuing without blocking UI.`, e);
+      try {
+        // If quota exceeded, attempt to prune transient history cache
+        if (key.includes('history')) {
+          localStorage.removeItem('ashtl_history');
+        }
+      } catch (_) {}
+    }
+  };
+
   // Initialize theme and load persisted reader preferences
   useEffect(() => {
     const savedTheme = localStorage.getItem('ashtl_theme');
@@ -518,7 +532,7 @@ export default function App() {
             };
           });
           setNovels(mappedNovels);
-          localStorage.setItem('ashtl_novels', JSON.stringify(mappedNovels));
+          safeSetItem('ashtl_novels', JSON.stringify(mappedNovels));
         }
 
         const { data: commentsData } = await client
@@ -540,7 +554,7 @@ export default function App() {
             createdAt: c.created_at
           }));
           setComments(mappedComments);
-          localStorage.setItem('ashtl_comments', JSON.stringify(mappedComments));
+          safeSetItem('ashtl_comments', JSON.stringify(mappedComments));
         }
       } catch (err) {
         console.error('Supabase fetch failed, continuing with local state', err);
@@ -552,14 +566,14 @@ export default function App() {
 
   // Save novels & comments to localStorage whenever changed
   useEffect(() => {
-    localStorage.setItem('ashtl_novels', JSON.stringify(novels));
+    safeSetItem('ashtl_novels', JSON.stringify(novels));
     if (novels.length > 0 && !adminNovelId) {
       setAdminNovelId(novels[0].id);
     }
   }, [novels, adminNovelId]);
 
   useEffect(() => {
-    localStorage.setItem('ashtl_comments', JSON.stringify(comments));
+    safeSetItem('ashtl_comments', JSON.stringify(comments));
   }, [comments]);
 
   // Always reset scroll to top on view or chapter navigation
@@ -762,9 +776,9 @@ export default function App() {
     setBookmarks(prev => {
       const updated = prev.filter(b => b.novelId !== novelId);
       const bKey = getBookmarkStorageKey(authUser?.id);
-      localStorage.setItem(bKey, JSON.stringify(updated));
+      safeSetItem(bKey, JSON.stringify(updated));
       if (!authUser) {
-        localStorage.setItem('ashtl_bookmarks', JSON.stringify(updated));
+        safeSetItem('ashtl_bookmarks', JSON.stringify(updated));
       }
       return updated;
     });
@@ -773,9 +787,9 @@ export default function App() {
     setHistory(prev => {
       const updated = prev.filter(h => h.novelId !== novelId);
       const hKey = getHistoryStorageKey(authUser?.id);
-      localStorage.setItem(hKey, JSON.stringify(updated));
+      safeSetItem(hKey, JSON.stringify(updated));
       if (!authUser) {
-        localStorage.setItem('ashtl_history', JSON.stringify(updated));
+        safeSetItem('ashtl_history', JSON.stringify(updated));
       }
       return updated;
     });
@@ -984,7 +998,7 @@ export default function App() {
   const updateReaderSettings = (newSettings: Partial<ReadingSettings>) => {
     const updated = { ...readerSettings, ...newSettings };
     setReaderSettings(updated);
-    localStorage.setItem('ashtl_reader_settings', JSON.stringify(updated));
+    safeSetItem('ashtl_reader_settings', JSON.stringify(updated));
     showToast('Reader settings updated');
   };
 
@@ -1002,7 +1016,7 @@ export default function App() {
         }
         return n;
       });
-      localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+      safeSetItem('ashtl_novels', JSON.stringify(updated));
       return updated;
     });
 
@@ -1018,7 +1032,7 @@ export default function App() {
         } else if (typeof data === 'number') {
           setNovels(prev => {
             const updated = prev.map(n => n.id === novelId ? { ...n, bookmarksCount: data } : n);
-            localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+            safeSetItem('ashtl_novels', JSON.stringify(updated));
             return updated;
           });
         }
@@ -1034,7 +1048,7 @@ export default function App() {
         }
         return n;
       });
-      localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+      safeSetItem('ashtl_novels', JSON.stringify(updated));
       return updated;
     });
 
@@ -1050,7 +1064,7 @@ export default function App() {
         } else if (typeof data === 'number') {
           setNovels(prev => {
             const updated = prev.map(n => n.id === novelId ? { ...n, views: data } : n);
-            localStorage.setItem('ashtl_novels', JSON.stringify(updated));
+            safeSetItem('ashtl_novels', JSON.stringify(updated));
             return updated;
           });
         }
@@ -1090,9 +1104,9 @@ export default function App() {
       updateNovelBookmarksCount(novel.id, 1);
     }
     setBookmarks(updated);
-    localStorage.setItem(bKey, JSON.stringify(updated));
+    safeSetItem(bKey, JSON.stringify(updated));
     if (!authUser) {
-      localStorage.setItem('ashtl_bookmarks', JSON.stringify(updated));
+      safeSetItem('ashtl_bookmarks', JSON.stringify(updated));
     }
   };
 
@@ -1101,9 +1115,9 @@ export default function App() {
     const updated = bookmarks.filter(b => b.novelId !== novelId);
     setBookmarks(updated);
     const bKey = getBookmarkStorageKey(authUser?.id);
-    localStorage.setItem(bKey, JSON.stringify(updated));
+    safeSetItem(bKey, JSON.stringify(updated));
     if (!authUser) {
-      localStorage.setItem('ashtl_bookmarks', JSON.stringify(updated));
+      safeSetItem('ashtl_bookmarks', JSON.stringify(updated));
     }
     if (authUser && supabase && isSupabaseConfigured) {
       deleteRemoteBookmark(authUser.id, novelId);
@@ -1129,9 +1143,9 @@ export default function App() {
     ];
     setHistory(updatedHistory);
     const hKey = getHistoryStorageKey(authUser?.id);
-    localStorage.setItem(hKey, JSON.stringify(updatedHistory));
+    safeSetItem(hKey, JSON.stringify(updatedHistory));
     if (!authUser) {
-      localStorage.setItem('ashtl_history', JSON.stringify(updatedHistory));
+      safeSetItem('ashtl_history', JSON.stringify(updatedHistory));
     }
     if (authUser && supabase && isSupabaseConfigured) {
       saveRemoteHistory(authUser.id, novel.id, chapter.id, chapter.chapterNumber, Math.round(progressPct));
@@ -1143,9 +1157,9 @@ export default function App() {
     const updated = history.filter(h => h.novelId !== novelId);
     setHistory(updated);
     const hKey = getHistoryStorageKey(authUser?.id);
-    localStorage.setItem(hKey, JSON.stringify(updated));
+    safeSetItem(hKey, JSON.stringify(updated));
     if (!authUser) {
-      localStorage.setItem('ashtl_history', JSON.stringify(updated));
+      safeSetItem('ashtl_history', JSON.stringify(updated));
     }
     if (authUser && supabase && isSupabaseConfigured) {
       deleteRemoteHistory(authUser.id, novelId);
