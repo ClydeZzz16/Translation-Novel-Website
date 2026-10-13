@@ -1184,7 +1184,7 @@ export default function App() {
   }, [novels, selectedNovelSlug]);
 
   const currentChapter = useMemo(() => {
-    if (!currentNovel || currentNovel.chapters.length === 0) return null;
+    if (!currentNovel || !Array.isArray(currentNovel.chapters) || currentNovel.chapters.length === 0) return null;
     return currentNovel.chapters.find(c => c.id === selectedChapterId) || currentNovel.chapters[0] || null;
   }, [currentNovel, selectedChapterId]);
 
@@ -2208,219 +2208,254 @@ export default function App() {
         )}
 
         {/* READER VIEW */}
-        {currentPage === 'reader' && currentNovel && currentChapter && (
-          <div className={`min-h-screen transition-colors duration-200 ${
-            readerSettings.theme === 'light' ? 'bg-[#faf8f5] text-[#1a1a1c]' :
-            readerSettings.theme === 'sepia' ? 'bg-[#f5ebd7] text-[#2c2214]' :
-            readerSettings.theme === 'pitch-black' ? 'bg-black text-[#d0d0d0]' :
-            'bg-[#121316] text-[#e0e0e0]'
-          }`}>
-            {/* Reader Floating Header Bar */}
-            <header className="sticky top-0 z-50 border-b border-slate-200/50 dark:border-slate-800/50 backdrop-blur-md bg-white/90 dark:bg-[#121316]/90 px-4 h-14 flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <button
-                  onClick={() => navigateTo('novel-detail')}
-                  className="p-1.5 rounded-lg hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
-                  title="Back to Novel Details"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <div className="text-left max-w-xs sm:max-w-md truncate">
-                  <h2 className="text-xs font-bold truncate text-slate-900 dark:text-slate-100">{currentNovel.title}</h2>
-                  <p className="text-[11px] truncate text-slate-700 dark:text-slate-400 font-medium">{currentChapter.title}</p>
-                </div>
-              </div>
-
-              {/* Reader Controls */}
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => toggleBookmark(currentNovel, currentChapter.id, currentChapter.chapterNumber)}
-                  className="p-2 rounded-lg hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
-                  title="Bookmark Chapter"
-                >
-                  <Bookmark className={`w-4 h-4 ${bookmarks.some(b => b.novelId === currentNovel.id) ? 'fill-amber-500 text-amber-500' : ''}`} />
-                </button>
-
-                {/* Reader Settings Modal Trigger */}
-                <button
-                  onClick={() => {
-                    const el = document.getElementById('reader-settings-panel');
-                    if (el) el.classList.toggle('hidden');
-                  }}
-                  className="p-2 rounded-lg hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
-                  title="Reading Settings"
-                >
-                  <Settings className="w-4 h-4" />
-                </button>
-              </div>
-            </header>
-
-            {/* Reader Settings Slide-Down Panel */}
-            <div id="reader-settings-panel" className="hidden border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white p-6 max-w-2xl mx-auto shadow-2xl rounded-b-2xl animate-fadeIn space-y-6 text-left">
-              <div className="flex items-center justify-between border-b pb-3 border-slate-200 dark:border-slate-800">
-                <h3 className="font-bold text-sm flex items-center space-x-2">
-                  <Sliders className="w-4 h-4 text-violet-500" />
-                  <span>Reader Customizer</span>
-                </h3>
-                <button 
-                  onClick={() => document.getElementById('reader-settings-panel')?.classList.add('hidden')}
-                  className="text-xs text-slate-700 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer font-semibold"
-                >
-                  Close
-                </button>
-              </div>
-
-              {/* Settings Controls */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                {/* Font Size */}
-                <div className="space-y-2">
-                  <label className="font-semibold block text-slate-700 dark:text-slate-300">Font Size</label>
-                  <div className="flex rounded-lg border border-slate-300 dark:border-slate-700 overflow-hidden">
-                    {(['sm', 'md', 'lg', 'xl'] as const).map(size => (
-                      <button
-                        key={size}
-                        onClick={() => updateReaderSettings({ fontSize: size })}
-                        className={`flex-1 py-1.5 uppercase font-bold transition-colors cursor-pointer ${readerSettings.fontSize === size ? 'bg-violet-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'}`}
-                      >
-                        {size}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Reader Width */}
-                <div className="space-y-2">
-                  <label className="font-semibold block text-slate-700 dark:text-slate-300">Reading Area Width</label>
-                  <div className="flex rounded-lg border border-slate-300 dark:border-slate-700 overflow-hidden">
-                    {(['narrow', 'normal', 'wide'] as const).map(w => (
-                      <button
-                        key={w}
-                        onClick={() => updateReaderSettings({ readerWidth: w })}
-                        className={`flex-1 py-1.5 capitalize font-semibold transition-colors cursor-pointer ${readerSettings.readerWidth === w ? 'bg-violet-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'}`}
-                      >
-                        {w}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Theme Palette */}
-                <div className="space-y-2">
-                  <label className="font-semibold block text-slate-700 dark:text-slate-300">Background Theme</label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {[
-                      { id: 'light', label: 'Light', bg: 'bg-[#faf8f5] border-slate-300 text-slate-900' },
-                      { id: 'sepia', label: 'Sepia', bg: 'bg-[#f5ebd7] border-amber-300 text-amber-950' },
-                      { id: 'dark', label: 'Dark', bg: 'bg-[#121316] border-slate-700 text-white' },
-                      { id: 'pitch-black', label: 'OLED', bg: 'bg-black border-slate-800 text-white' }
-                    ].map(t => (
-                      <button
-                        key={t.id}
-                        onClick={() => updateReaderSettings({ theme: t.id as any })}
-                        className={`py-2 text-[11px] font-bold rounded-lg border cursor-pointer ${t.bg} ${readerSettings.theme === t.id ? 'ring-2 ring-violet-500' : ''}`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-              </div>
-            </div>
-
-            {/* In-Reader Ad Slot */}
-            <div className="pt-4">
-              <AdSlot slotLocation="chapter-top" />
-            </div>
-
-            {/* Chapter Content Main Reader Body */}
-            <article className={`mx-auto px-4 py-8 transition-all duration-200 text-left ${
-              readerSettings.readerWidth === 'narrow' ? 'max-w-xl' :
-              readerSettings.readerWidth === 'wide' ? 'max-w-4xl' : 'max-w-2xl'
+        {currentPage === 'reader' && (
+          currentNovel && currentChapter ? (
+            <div className={`min-h-screen transition-colors duration-200 ${
+              readerSettings.theme === 'light' ? 'bg-[#faf8f5] text-[#1a1a1c]' :
+              readerSettings.theme === 'sepia' ? 'bg-[#f5ebd7] text-[#2c2214]' :
+              readerSettings.theme === 'pitch-black' ? 'bg-black text-[#d0d0d0]' :
+              'bg-[#121316] text-[#e0e0e0]'
             }`}>
-              {/* Title Header */}
-              <div className="text-center space-y-2 mb-10 pb-6 border-b border-slate-300/40 dark:border-slate-800">
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                  {currentChapter.title}
-                </h1>
-                <p className="text-xs opacity-75 font-medium">
-                  {currentNovel.title} • Translated by {currentNovel.translator}
+              {/* Reader Floating Header Bar */}
+              <header className="sticky top-0 z-50 border-b border-slate-200/50 dark:border-slate-800/50 backdrop-blur-md bg-white/90 dark:bg-[#121316]/90 px-4 h-14 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={() => navigateTo('novel-detail')}
+                    className="p-1.5 rounded-lg hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
+                    title="Back to Novel Details"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <div className="text-left max-w-xs sm:max-w-md truncate">
+                    <h2 className="text-xs font-bold truncate text-slate-900 dark:text-slate-100">{currentNovel.title}</h2>
+                    <p className="text-[11px] truncate text-slate-700 dark:text-slate-400 font-medium">{currentChapter.title}</p>
+                  </div>
+                </div>
+
+                {/* Reader Controls */}
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => toggleBookmark(currentNovel, currentChapter.id, currentChapter.chapterNumber)}
+                    className="p-2 rounded-lg hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
+                    title="Bookmark Chapter"
+                  >
+                    <Bookmark className={`w-4 h-4 ${bookmarks.some(b => b.novelId === currentNovel.id) ? 'fill-amber-500 text-amber-500' : ''}`} />
+                  </button>
+
+                  {/* Reader Settings Modal Trigger */}
+                  <button
+                    onClick={() => {
+                      const el = document.getElementById('reader-settings-panel');
+                      if (el) el.classList.toggle('hidden');
+                    }}
+                    className="p-2 rounded-lg hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
+                    title="Reading Settings"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
+                </div>
+              </header>
+
+              {/* Reader Settings Slide-Down Panel */}
+              <div id="reader-settings-panel" className="hidden border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white p-6 max-w-2xl mx-auto shadow-2xl rounded-b-2xl animate-fadeIn space-y-6 text-left">
+                <div className="flex items-center justify-between border-b pb-3 border-slate-200 dark:border-slate-800">
+                  <h3 className="font-bold text-sm flex items-center space-x-2">
+                    <Sliders className="w-4 h-4 text-violet-500" />
+                    <span>Reader Customizer</span>
+                  </h3>
+                  <button 
+                    onClick={() => document.getElementById('reader-settings-panel')?.classList.add('hidden')}
+                    className="text-xs text-slate-700 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer font-semibold"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                {/* Settings Controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  {/* Font Size */}
+                  <div className="space-y-2">
+                    <label className="font-semibold block text-slate-700 dark:text-slate-300">Font Size</label>
+                    <div className="flex rounded-lg border border-slate-300 dark:border-slate-700 overflow-hidden">
+                      {(['sm', 'md', 'lg', 'xl'] as const).map(size => (
+                        <button
+                          key={size}
+                          onClick={() => updateReaderSettings({ fontSize: size })}
+                          className={`flex-1 py-1.5 uppercase font-bold transition-colors cursor-pointer ${readerSettings.fontSize === size ? 'bg-violet-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'}`}
+                        >
+                          {size}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Reader Width */}
+                  <div className="space-y-2">
+                    <label className="font-semibold block text-slate-700 dark:text-slate-300">Reading Area Width</label>
+                    <div className="flex rounded-lg border border-slate-300 dark:border-slate-700 overflow-hidden">
+                      {(['narrow', 'normal', 'wide'] as const).map(w => (
+                        <button
+                          key={w}
+                          onClick={() => updateReaderSettings({ readerWidth: w })}
+                          className={`flex-1 py-1.5 capitalize font-semibold transition-colors cursor-pointer ${readerSettings.readerWidth === w ? 'bg-violet-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'}`}
+                        >
+                          {w}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Theme Palette */}
+                  <div className="space-y-2">
+                    <label className="font-semibold block text-slate-700 dark:text-slate-300">Background Theme</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { id: 'light', label: 'Light', bg: 'bg-[#faf8f5] border-slate-300 text-slate-900' },
+                        { id: 'sepia', label: 'Sepia', bg: 'bg-[#f5ebd7] border-amber-300 text-amber-950' },
+                        { id: 'dark', label: 'Dark', bg: 'bg-[#121316] border-slate-700 text-white' },
+                        { id: 'pitch-black', label: 'OLED', bg: 'bg-black border-slate-800 text-white' }
+                      ].map(t => (
+                        <button
+                          key={t.id}
+                          onClick={() => updateReaderSettings({ theme: t.id as any })}
+                          className={`py-2 text-[11px] font-bold rounded-lg border cursor-pointer ${t.bg} ${readerSettings.theme === t.id ? 'ring-2 ring-violet-500' : ''}`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+              {/* In-Reader Ad Slot */}
+              <div className="pt-4">
+                <AdSlot slotLocation="chapter-top" />
+              </div>
+
+              {/* Chapter Content Main Reader Body */}
+              <article className={`mx-auto px-4 py-8 transition-all duration-200 text-left ${
+                readerSettings.readerWidth === 'narrow' ? 'max-w-xl' :
+                readerSettings.readerWidth === 'wide' ? 'max-w-4xl' : 'max-w-2xl'
+              }`}>
+                {/* Title Header */}
+                <div className="text-center space-y-2 mb-10 pb-6 border-b border-slate-300/40 dark:border-slate-800">
+                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                    {currentChapter.title}
+                  </h1>
+                  <p className="text-xs opacity-75 font-medium">
+                    {currentNovel.title} • Translated by {currentNovel.translator}
+                  </p>
+                </div>
+
+                {/* Text Paragraph Rendering */}
+                <ChapterContentRenderer
+                  content={currentChapter.content}
+                  theme={readerSettings.theme}
+                  className={`${
+                    readerSettings.fontFamily === 'serif' ? 'font-serif' :
+                    readerSettings.fontFamily === 'mono' ? 'font-mono' : 'font-sans'
+                  } ${
+                    readerSettings.fontSize === 'sm' ? 'text-sm' :
+                    readerSettings.fontSize === 'lg' ? 'text-lg' :
+                    readerSettings.fontSize === 'xl' ? 'text-xl' : 'text-base'
+                  } ${
+                    readerSettings.lineHeight === 'compact' ? 'leading-normal' :
+                    readerSettings.lineHeight === 'comfortable' ? 'leading-loose' : 'leading-relaxed'
+                  }`}
+                />
+
+                {/* Bottom In-Content Ad */}
+                <AdSlot slotLocation="chapter-bottom" />
+
+                {/* Chapter Bottom Navigation Bar */}
+                <div className="mt-12 pt-8 border-t border-slate-300/40 dark:border-slate-800 flex items-center justify-between gap-4">
+                  {/* Previous Chapter */}
+                  <button
+                    disabled={currentChapter.chapterNumber <= 1}
+                    onClick={() => {
+                      const prevCh = currentNovel.chapters.find(c => c.chapterNumber === currentChapter.chapterNumber - 1);
+                      if (prevCh) {
+                        setSelectedChapterId(prevCh.id);
+                        window.scrollTo(0, 0);
+                      }
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-200/50 dark:hover:bg-white/10 flex items-center space-x-1 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    <span>Previous</span>
+                  </button>
+
+                  {/* Chapter Selector Dropdown */}
+                  <select
+                    aria-label="Select chapter"
+                    value={currentChapter.id}
+                    onChange={(e) => {
+                      setSelectedChapterId(e.target.value);
+                      window.scrollTo(0, 0);
+                    }}
+                    className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent text-xs font-bold focus:outline-none cursor-pointer"
+                  >
+                    {currentNovel.chapters.map(c => (
+                      <option key={c.id} value={c.id} className="bg-slate-900 text-white">
+                        Ch. {c.chapterNumber}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Next Chapter */}
+                  <button
+                    disabled={currentChapter.chapterNumber >= currentNovel.chapters.length}
+                    onClick={() => {
+                      const nextCh = currentNovel.chapters.find(c => c.chapterNumber === currentChapter.chapterNumber + 1);
+                      if (nextCh) {
+                        setSelectedChapterId(nextCh.id);
+                        window.scrollTo(0, 0);
+                      }
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed hover:bg-violet-700 flex items-center space-x-1 cursor-pointer"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </article>
+            </div>
+          ) : (
+            <div className={`min-h-screen transition-colors duration-200 flex items-center justify-center p-6 ${
+              readerSettings.theme === 'light' ? 'bg-[#faf8f5] text-[#1a1a1c]' :
+              readerSettings.theme === 'sepia' ? 'bg-[#f5ebd7] text-[#2c2214]' :
+              readerSettings.theme === 'pitch-black' ? 'bg-black text-[#d0d0d0]' :
+              'bg-[#121316] text-[#e0e0e0]'
+            }`}>
+              <div className="text-center space-y-4 max-w-md mx-auto">
+                <BookOpen className="w-12 h-12 text-slate-400 mx-auto" />
+                <h2 className="text-xl font-bold">Chapter Unavailable</h2>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  {currentNovel
+                    ? `No readable chapters are currently available for "${currentNovel.title}". Chapters may still be unpublished drafts.`
+                    : 'The requested novel or chapter could not be found.'}
                 </p>
+                <div className="pt-2 flex items-center justify-center gap-3">
+                  {currentNovel && (
+                    <button
+                      onClick={() => navigateTo('novel-detail', true, true, currentNovel.slug)}
+                      className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                    >
+                      Back to Novel Details
+                    </button>
+                  )}
+                  <button
+                    onClick={() => navigateTo('home')}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold cursor-pointer"
+                  >
+                    Return to Home
+                  </button>
+                </div>
               </div>
-
-              {/* Text Paragraph Rendering */}
-              <ChapterContentRenderer
-                content={currentChapter.content}
-                theme={readerSettings.theme}
-                className={`${
-                  readerSettings.fontFamily === 'serif' ? 'font-serif' :
-                  readerSettings.fontFamily === 'mono' ? 'font-mono' : 'font-sans'
-                } ${
-                  readerSettings.fontSize === 'sm' ? 'text-sm' :
-                  readerSettings.fontSize === 'lg' ? 'text-lg' :
-                  readerSettings.fontSize === 'xl' ? 'text-xl' : 'text-base'
-                } ${
-                  readerSettings.lineHeight === 'compact' ? 'leading-normal' :
-                  readerSettings.lineHeight === 'comfortable' ? 'leading-loose' : 'leading-relaxed'
-                }`}
-              />
-
-              {/* Bottom In-Content Ad */}
-              <AdSlot slotLocation="chapter-bottom" />
-
-              {/* Chapter Bottom Navigation Bar */}
-              <div className="mt-12 pt-8 border-t border-slate-300/40 dark:border-slate-800 flex items-center justify-between gap-4">
-                {/* Previous Chapter */}
-                <button
-                  disabled={currentChapter.chapterNumber <= 1}
-                  onClick={() => {
-                    const prevCh = currentNovel.chapters.find(c => c.chapterNumber === currentChapter.chapterNumber - 1);
-                    if (prevCh) {
-                      setSelectedChapterId(prevCh.id);
-                      window.scrollTo(0, 0);
-                    }
-                  }}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-200/50 dark:hover:bg-white/10 flex items-center space-x-1 cursor-pointer"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  <span>Previous</span>
-                </button>
-
-                {/* Chapter Selector Dropdown */}
-                <select
-                  aria-label="Select chapter"
-                  value={currentChapter.id}
-                  onChange={(e) => {
-                    setSelectedChapterId(e.target.value);
-                    window.scrollTo(0, 0);
-                  }}
-                  className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent text-xs font-bold focus:outline-none cursor-pointer"
-                >
-                  {currentNovel.chapters.map(c => (
-                    <option key={c.id} value={c.id} className="bg-slate-900 text-white">
-                      Ch. {c.chapterNumber}
-                    </option>
-                  ))}
-                </select>
-
-                {/* Next Chapter */}
-                <button
-                  disabled={currentChapter.chapterNumber >= currentNovel.chapters.length}
-                  onClick={() => {
-                    const nextCh = currentNovel.chapters.find(c => c.chapterNumber === currentChapter.chapterNumber + 1);
-                    if (nextCh) {
-                      setSelectedChapterId(nextCh.id);
-                      window.scrollTo(0, 0);
-                    }
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed hover:bg-violet-700 flex items-center space-x-1 cursor-pointer"
-                >
-                  <span>Next</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </article>
-          </div>
+            </div>
+          )
         )}
 
         {/* BOOKMARKS VIEW */}
