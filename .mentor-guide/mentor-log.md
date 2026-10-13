@@ -60,6 +60,8 @@
 - **Decision**: Enhance `AdminChapters.tsx` with a selection-aware authoring toolbar providing one-click insertion of "Red System Glow", "【 】 Brackets", "Center", "Bold", and "Italic".
 - **Decision**: Add "Write" vs "Live Preview" tabs in the chapter authoring modal so publishers can inspect the illuminated red glow on dark reading background prior to publishing.
 - **Decision**: Maintain backward compatibility across all reader themes (Dark, Pitch Black OLED, Sepia, and Light) with high-contrast atmospheric backdrops where necessary.
+- **Decision**: Fortify `ChapterContentRenderer` and `App.tsx` reader view with null-safety and defensive fallbacks to eliminate white screen crashes caused by missing chapter content, empty drafts, or Supabase RLS draft filtering.
+
 
 
 
