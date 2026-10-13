@@ -67,7 +67,16 @@ export const ChapterContentRenderer: React.FC<ChapterContentRendererProps> = ({
   theme = 'dark',
   className = ''
 }) => {
-  const paragraphs = content.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
+  const safeContent = typeof content === 'string' ? content : '';
+  const paragraphs = safeContent.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
+
+  if (paragraphs.length === 0) {
+    return (
+      <div className={`space-y-6 reader-theme-${theme} ${className} py-12 text-center text-slate-500 italic`}>
+        <p>This chapter does not contain any readable text yet.</p>
+      </div>
+    );
+  }
 
   return (
     <div className={`space-y-6 reader-theme-${theme} ${className}`}>

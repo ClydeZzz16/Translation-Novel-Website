@@ -57,4 +57,17 @@ describe('ChapterContentRenderer: System Prompt & Glowing Notification Parsing',
     expect(screen.getByText('bold warrior').tagName).toBe('STRONG');
     expect(screen.getByText('ancient magic').tagName).toBe('EM');
   });
+
+  it('gracefully handles empty, null, or undefined content without crashing', () => {
+    render(<ChapterContentRenderer content="" theme="dark" />);
+    expect(screen.getByText(/This chapter does not contain any readable text yet/i)).toBeInTheDocument();
+
+    // @ts-expect-error test runtime resilience for null/undefined content
+    const { container: c2 } = render(<ChapterContentRenderer content={null} theme="dark" />);
+    expect(c2).toBeInTheDocument();
+
+    // @ts-expect-error test runtime resilience for null/undefined content
+    const { container: c3 } = render(<ChapterContentRenderer content={undefined} theme="dark" />);
+    expect(c3).toBeInTheDocument();
+  });
 });
